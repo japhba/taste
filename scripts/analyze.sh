@@ -7,4 +7,5 @@ python -m taste.analysis_haiku
 python -m taste.analysis_images
 python -m taste.probes
 python -m taste.pcs "$@"
+python -m taste.taste_model
 python -m taste.report
