@@ -13,6 +13,7 @@ import pandas as pd
 from taste.common import ratings, items, fam, rater_order, generator_order, ANCHOR, RESULTS
 from taste.paths import DATA, PLOTS, REPORTS, ROOT
 from taste.report_katex import stylesheet, typeset
+from taste import report_examples
 
 SERVED = Path.home() / "generative-learning/reports"
 NAME = "taste"
@@ -87,6 +88,7 @@ def build():
     largest_api = max((r for r in sc.index if r not in local and fam(r) == "qwen"), key=lambda r: sc.loc[r].params_b)
     craft = [(k, v) for k, v in pcs.items() if k.startswith("haiku-craft/")]
     craft_summary = "; ".join(f"{k.split('/')[1]}: “{v['labels'][v['top'][0]]['low']}” → “{v['labels'][v['top'][0]]['high']}” (label check {pct(v['labels'][v['top'][0]]['label_accuracy'])})" for k, v in craft)
+    ex, ex_css = report_examples.build()
     built = datetime.now(ZoneInfo("Europe/London")).strftime("%d %B %Y, %H:%M %Z")
     n_haiku, n_gen = len(hi), hi.generator.nunique()
     cross = cm[(cm.pool == "last") & (cm.direction == "haiku → images")].pivot(index="rater", columns="test", values="rho")
@@ -138,13 +140,19 @@ def build():
 {fig("haiku_judge_scaling", "Per rater: Spearman ρ of its score with log generator size (open generators), with the anchor judge, and the AUC for ranking journal haiku above tweet haiku.")}
 {table(sc[["params_b", "rho_gen_size", "rho_anchor", "auc_journal_vs_twaiku"]].rename(columns={"params_b": "params (B)", "rho_gen_size": "ρ size", "rho_anchor": "ρ anchor", "auc_journal_vs_twaiku": "AUC journal>tweet"}))}
 <p class="small">Best open local rater against the anchor: {best_local} (ρ = {f2(sc.loc[best_local].rho_anchor)}).</p>
+<h3>Examples</h3>
+{ex["ladder"]}
+{ex["humans"]}
+{ex["loves"]}
 </section>
 
 <section id="images">
 <h2>2 · Images: agreement with people</h2>
 {fig("images_gt_agreement", "Spearman ρ between each rater's score and the human mean, per dataset, against rater size. Dotted lines: API raters.")}
 {table(ga)}
+{ex["lapis"]}
 <h3>The ACX AI Art Turing Test</h3>
+{ex["acx"]}
 {fig("acx_preference_detection", "Left: do raters rank AI images above human ones? Right: accuracy of the human-vs-AI call. Human median respondent and crowd majority from the 11k ACX responses.")}
 <p>{ANCHOR} calls the origin of {pct(det.get(ANCHOR, np.nan))} of the 50 images correctly (median human {pct(det['humans: median respondent'])}) and rates AI images far lower than human ones. It also names the artist of most of the human works, so recognition of canonical paintings and the public answer key (online since November 2024) are live confounds. Split by what the rater recognised (mean percentile rank; the crowd's rank for the same images alongside):</p>
 {table(pd.DataFrame(R["acx_recognition"]).set_index(["rater", "group"]).rename(columns={"rater_pct_rank": "rater's rank", "crowd_pct_rank": "crowd's rank"}).reset_index(level=1), index=True)}
@@ -166,6 +174,7 @@ def build():
 <h3>Assortative taste</h3>
 <p>The structure in the matrix is not family but capability. For each rater, correlate its leftover preference (the row above) with log generator size: small judges like small writers more than everyone else does, large judges like large writers. Across raters, that correlation rises with the rater's own size (Spearman ρ = {beh['assortative_rho_across_raters']:+.2f}).</p>
 {fig("haiku_assortative", "Per rater: Spearman ρ between its interaction row and log generator size (open generators of known size).", "60%")}
+{ex["disagree"]}
 </section>
 
 <section id="features">
@@ -173,6 +182,8 @@ def build():
 <p>PCA (20 components) of a reference model's item representation (mean over the item's tokens, at ⅔ depth). For each PC we ask which raters reward it, let {ANCHOR} name its two poles from 12 extreme items each, and check the name on 20 held-out pairs: given only the label, can it tell which item is higher? Raw haiku axes mostly track the topic (absence and empty rooms vs. delicate nature), so the <b>haiku-craft</b> rows repeat the analysis on model haiku only, with each topic's mean removed from the representations and the scores: what is left is how a haiku is written, not what it is about.</p>
 {table(labs, index=False)}
 {"".join(fig(f"pc_rater_profile_{k.replace('/', '_')}", f"{k.split('/')[0]}: Spearman ρ of every rater's score with {k.split('/')[1]}'s PCs (oriented so + = what that model rates higher).") for k in pcs)}
+<h3>The axes, by example</h3>
+{ex["axes"]}
 <h3>Pareto frontiers</h3>
 <p>Items in the plane of the two PCs that most drive the reference model's rating; the black line is the set of items no other item beats on both axes, the red arrow the direction of the model's rating.</p>
 {"".join(fig(f"pareto_{k.replace('/', '_')}", f"{k}: Pareto front and rating direction.", "80%") for k in pcs)}
@@ -200,7 +211,7 @@ def build():
 </section>
 <footer>Built {built} by <code>taste/report.py</code> from <code>{RESULTS}</code>. Literature survey: <a href="{NAME}-files/lit_survey.md">lit_survey.md</a>.</footer>
 """
-    css = (Path(__file__).parent / "report.css").read_text() + "\nfigure img{background:#fff;border-radius:8px;max-width:100%;display:block}\n"
+    css = (Path(__file__).parent / "report.css").read_text() + "\nfigure img{background:#fff;border-radius:8px;max-width:100%;display:block}\n" + ex_css
     page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate"><meta http-equiv="pragma" content="no-cache"><meta http-equiv="expires" content="0">
 <title>Taste in language models</title><style>{stylesheet()}</style><style>{css}</style></head><body><main>{typeset(body)}</main></body></html>"""
@@ -208,7 +219,7 @@ def build():
     shutil.copy2(Path(__file__).parents[1] / "docs/lit_survey.md", files / "lit_survey.md")
     out = REPORTS / f"{NAME}.html"; out.write_text(page)
     for p in [REPORTS.parent, REPORTS, files]: p.chmod(0o755)
-    for p in [out, *files.iterdir()]: p.chmod(0o644)
+    for p in [out, *files.rglob("*")]: p.chmod(0o755 if p.is_dir() else 0o644)
     for target in [out, files]:
         link = SERVED / target.name
         if link.is_symlink(): link.unlink()

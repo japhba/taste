@@ -80,6 +80,7 @@ def label_pc(client, which, it, pc, cache_key):
     else:
         content = [{"type": "text", "text": intro + "\nFirst image: HIGH group. Second image: LOW group."},
                    img_part(sheet(it.loc[hi, "path"])), img_part(sheet(it.loc[lo, "path"]))]
+    if "label_accuracy" in cache.get(cache_key, {}): return cache[cache_key] | {"cost": 0.0}  # already named and validated
     if cache_key in cache: lab, cost = cache[cache_key], 0.0
     else:
         txt, cost = ask(client, content)
@@ -97,7 +98,9 @@ def label_pc(client, which, it, pc, cache_key):
         m = re.search(r"\b([AB])\b", ans)  # answers come as 'A', '**B**', 'Image A', ...
         return (m is not None and m.group(1) == ("A" if h_first else "B")), cst
     with ThreadPoolExecutor(8) as ex_: res = list(ex_.map(judge, pairs))
-    return dict(**lab, label_accuracy=float(np.mean([r[0] for r in res])), cost=cost + sum(r[1] for r in res))
+    lab = dict(**lab, label_accuracy=float(np.mean([r[0] for r in res])))
+    cache[cache_key] = lab; LABEL_CACHE.write_text(json.dumps(cache, indent=1))
+    return lab | {"cost": cost + sum(r[1] for r in res)}
 
 
 # ---------- plots
@@ -147,6 +150,8 @@ def main(do_label):
             for k in B: B[k] *= np.sign(R.loc[ref, k]); R[k] *= np.sign(R.loc[ref, k])  # +PC = what ref rates higher
             F = pd.DataFrame({k: [stats.spearmanr(B[k], feats[f], nan_policy="omit").statistic for f in feats] for k in top}, index=feats.columns)
             labels = {k: label_pc(client, which, it, B[k], f"{variant}/{ref}/{k}") for k in top} if do_label else {}
+            (ROOT / "pc_scores").mkdir(exist_ok=True)
+            B[top].to_parquet(ROOT / "pc_scores" / f"{variant}__{ref}.parquet")  # oriented per-item scores, for the example panels
             out[f"{variant}/{ref}"] = dict(evr=evr.tolist(), top=top, rater_pc_rho=R[top].to_dict(), feature_rho=F.to_dict(), labels=labels)
             fig, ax = plt.subplots(figsize=(8, 5))
             Rt = R.loc[rater_order(R.index)]
