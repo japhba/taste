@@ -35,7 +35,7 @@ def fetch(files: list[str]) -> float:
     return n / 1e9
 
 
-@app.function(image=image.add_local_file("taste/ds_convert.py", "/root/ds_convert.py"), volumes={"/vol": vol}, cpu=16.0, memory=192 * 1024, timeout=3 * 3600)
+@app.function(image=image.add_local_file("taste/ds_convert.py", "/root/ds_convert.py"), volumes={"/vol": vol}, cpu=4.0, memory=112 * 1024, timeout=3 * 3600)
 def convert(rank: int) -> float:
     import ds_convert
     vol.reload(); gb = ds_convert.convert(HF, TP, rank, MP); vol.commit()

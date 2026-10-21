@@ -8,7 +8,23 @@ never reads another rank's experts. Renaming and sharding are copied verbatim fr
 import argparse, importlib.util, json, os, shutil, time
 from collections import defaultdict
 import torch
-from safetensors.torch import safe_open, save_file
+from safetensors.torch import save_file
+
+DTYPES = {"F32": torch.float32, "BF16": torch.bfloat16, "F16": torch.float16, "F8_E4M3": torch.float8_e4m3fn, "F8_E8M0": torch.float8_e8m0fnu,
+          "I8": torch.int8, "U8": torch.uint8, "I32": torch.int32, "I64": torch.int64}
+
+
+class Reader:
+    """Minimal safetensors reader with plain seek+read (no mmap): safetensors' mmap path failed on Modal Volumes with
+    'could not determine the shape of object type torch.storage.UntypedStorage'."""
+    def __init__(self, path):
+        self.f = open(path, "rb"); n = int.from_bytes(self.f.read(8), "little")
+        self.h = json.loads(self.f.read(n)); self.h.pop("__metadata__", None); self.base = 8 + n
+    def __enter__(self): return self
+    def __exit__(self, *a): self.f.close()
+    def get_tensor(self, k):
+        m = self.h[k]; a, b = m["data_offsets"]; self.f.seek(self.base + a)
+        return torch.frombuffer(bytearray(self.f.read(b - a)), dtype=torch.uint8).view(DTYPES[m["dtype"]]).reshape(m["shape"])
 
 
 def convert(HF, TP, rank, MP=8, expert_dtype="fp4"):
@@ -20,7 +36,7 @@ def convert(HF, TP, rank, MP=8, expert_dtype="fp4"):
     for src, fn in weight_map.items(): by_file[fn].append(src)
     t, sd, i, mp = time.time(), {}, rank, MP
     for fn, srcs in sorted(by_file.items()):
-        with safe_open(f"{HF}/{fn}", framework="pt", device="cpu") as f:
+        with Reader(f"{HF}/{fn}") as f:
             for source_name in srcs:
                 name = source_name.removeprefix("model.")
                 if name.startswith("mtp.") and name.split(".", 2)[-1] in ("embed.weight", "head.weight"): continue

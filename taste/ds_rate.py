@@ -1,7 +1,10 @@
 """DeepSeek-V4.1-Flash-1017 rater on DeepSeek's reference inference code (8-way tensor parallel): same prompts, digit readout
 and output files as taste.rate, one item per forward pass (prefill only, no generation), hidden states kept.
 
-  torchrun --nproc-per-node 8 -m taste.ds_rate --ckpt TP8_DIR --hf HF_DIR [--haiku-per-gen 50] [--datasets acx lapis ava]
+  torchrun --nproc-per-node 8 -m taste.ds_rate --ckpt TP8_DIR --hf HF_DIR [--plan acx lapis haiku ava] [--haiku-per-gen 50] [--max-minutes 40]
+
+Parts are rated in `plan` order and saved every 100 items, and all ranks stop together once --max-minutes (counted from
+process start, model loading included) is used up, so a budget-capped run keeps everything it finished.
 
 Hidden state = the hyper-connection residual stream (hc_mult copies) averaged over copies, after every 4th block.
 """
@@ -64,51 +67,73 @@ def main(a):
         types = None if not recs else torch.as_tensor(types, dtype=torch.long).view(1, -1).cuda()
         return prompt, ids, types, ([images] if recs else None)  # model.forward takes one image list per sample
 
-    for which in a.sets:
-        items = pd.read_parquet(DATA / f"{which}_items.parquet")
-        if which == "haiku" and a.haiku_per_gen: items = items.groupby("generator", group_keys=False).apply(lambda g: g.sample(min(len(g), a.haiku_per_gen), random_state=0))
-        if which == "images": items = items[items.dataset.isin(a.datasets)]
-        recs, last, mean = [], [], []
+    t0 = time.time()
+    haiku = pd.read_parquet(DATA / "haiku_items.parquet")
+    if a.haiku_per_gen: haiku = haiku.groupby("generator", group_keys=False).apply(lambda g: g.sample(min(len(g), a.haiku_per_gen), random_state=0))
+    images = pd.read_parquet(DATA / "images_items.parquet")
+    def existing(which):
+        """resume: what a previous (preempted / budget-capped) run of the same plan already saved"""
+        r, h = RATINGS / which / f"{NAME}.parquet", HIDDEN / which / f"{NAME}.npz"
+        if not (r.exists() and h.exists()): return dict(recs=[], last=[], mean=[])
+        df, z = pd.read_parquet(r), np.load(h, allow_pickle=True)
+        assert list(z["item_id"]) == df.item_id.tolist()
+        return dict(recs=df.drop(columns=["digit_mass", "score", "rater"]).to_dict("records"), last=list(z["last"]), mean=list(z["mean"]))
+    out = {w: existing(w) for w in ["haiku", "images"]}
+    done = {w: {r["item_id"] for r in o["recs"]} for w, o in out.items()}
+    if rank == 0: print("resuming with", {w: len(d) for w, d in done.items()}, flush=True)
+
+    def save(which):
+        o = out[which]
+        if rank != 0 or not o["recs"]: return
+        df = pd.DataFrame(o["recs"]); P = df[[f"p{d}" for d in range(1, 10)]].to_numpy()
+        df["digit_mass"] = P.sum(1); df["score"] = (P / P.sum(1, keepdims=True)) @ np.arange(1, 10)
+        (RATINGS / which).mkdir(exist_ok=True); (HIDDEN / which).mkdir(exist_ok=True)
+        df.assign(rater=NAME).to_parquet(RATINGS / which / f"{NAME}.parquet")
+        np.savez(HIDDEN / which / f"{NAME}.npz", item_id=df.item_id.to_numpy().astype(str), layers=np.array(KEEP), last=np.stack(o["last"]), mean=np.stack(o["mean"]))
+        print(f"saved {which}: {len(df)} items, digit mass min {df.digit_mass.min():.3f}, score {df.score.mean():.2f}±{df.score.std():.2f}", flush=True)
+
+    stop = False
+    for part in a.plan:
+        which = "haiku" if part == "haiku" else "images"
+        items = haiku if part == "haiku" else images[images.dataset == part]
         t = time.time()
+        items = items[~items.item_id.isin(done[which])]
         for k, row in enumerate(items.itertuples()):
+            flag = torch.tensor([float(time.time() - t0 > a.max_minutes * 60)], device="cuda"); dist.broadcast(flag, 0)
+            if flag.item(): stop = True; break
             if which == "haiku":
-                prompt, ids, types, images = encode([{"type": "text", "text": HAIKU_Q.format(haiku=row.haiku)}])
+                prompt, ids, types, imgs = encode([{"type": "text", "text": HAIKU_Q.format(haiku=row.haiku)}])
                 enc = tok(prompt, add_special_tokens=False, return_offsets_mapping=True)
                 assert enc.input_ids == ids[0].tolist(), "prompt tokenisation differs from prepare_vl_inputs"
-                s = prompt.index(row.haiku); e = s + len(row.haiku)
-                span = torch.tensor([o[0] < e and o[1] > s for o in enc.offset_mapping], device="cuda")
+                s_ = prompt.index(row.haiku); e_ = s_ + len(row.haiku)
+                span = torch.tensor([o[0] < e_ and o[1] > s_ for o in enc.offset_mapping], device="cuda")
             else:
-                prompt, ids, types, images = encode([{"type": "image_url", "image_url": {"url": str(DATA / row.path)}}, {"type": "text", "text": IMAGE_Q}])
+                prompt, ids, types, imgs = encode([{"type": "image_url", "image_url": {"url": str(DATA / row.path)}}, {"type": "text", "text": IMAGE_Q}])
                 span = types[0] >= 0
-            logits, states = forward_hidden(model, M, ids, images, types)
+            logits, states = forward_hidden(model, M, ids, imgs, types)
             p = logits[-1].float().softmax(-1)
             rec = {"item_id": row.item_id, **{f"p{d}": p[digits[d - 1]].item() for d in range(1, 10)}, "n_item_tokens": int(span.sum())}
             if which == "haiku":
                 pos = span[1:].nonzero()[:, 0]  # predict token pos+1 from pos
                 lp = logits[pos].float().log_softmax(-1).gather(1, ids[0, pos + 1][:, None])[:, 0]
                 rec["logprob_mean"] = lp.mean().item()
-            elif row.dataset == "acx":
-                _, ids2, types2, images2 = encode([{"type": "image_url", "image_url": {"url": str(DATA / row.path)}}, {"type": "text", "text": ORIGIN_Q}])
-                po = forward_hidden(model, M, ids2, images2, types2)[0][-1].float().softmax(-1)[origin]
+            elif part == "acx":
+                _, ids2, types2, imgs2 = encode([{"type": "image_url", "image_url": {"url": str(DATA / row.path)}}, {"type": "text", "text": ORIGIN_Q}])
+                po = forward_hidden(model, M, ids2, imgs2, types2)[0][-1].float().softmax(-1)[origin]
                 rec["p_human"] = (po[0] / po.sum()).item()
             else: rec["p_human"] = np.nan
             H = torch.stack([states[l][0] for l in KEEP])  # [L, T, d]
-            last.append(H[:, -1].half().cpu().numpy()); mean.append(H[:, span].float().mean(1).half().cpu().numpy())
-            recs.append(rec)
-            if rank == 0 and k % 50 == 0: print(f"{which} {k}/{len(items)} {(time.time() - t) / (k + 1):.2f} s/item", flush=True)
-        if rank == 0:
-            df = pd.DataFrame(recs); P = df[[f"p{d}" for d in range(1, 10)]].to_numpy()
-            df["digit_mass"] = P.sum(1); df["score"] = (P / P.sum(1, keepdims=True)) @ np.arange(1, 10)
-            (RATINGS / which).mkdir(exist_ok=True); (HIDDEN / which).mkdir(exist_ok=True)
-            df.assign(rater=NAME).to_parquet(RATINGS / which / f"{NAME}.parquet")
-            np.savez(HIDDEN / which / f"{NAME}.npz", item_id=df.item_id.to_numpy().astype(str), layers=np.array(KEEP), last=np.stack(last), mean=np.stack(mean))
-            print(which, "done", len(df), "digit mass", df.digit_mass.describe()[["min", "50%"]].round(3).to_dict(), "score", df.score.describe()[["mean", "std"]].round(2).to_dict(), flush=True)
+            o = out[which]; o["last"].append(H[:, -1].half().cpu().numpy()); o["mean"].append(H[:, span].float().mean(1).half().cpu().numpy()); o["recs"].append(rec)
+            if rank == 0 and k % 25 == 0: print(f"{part} {k}/{len(items)} {(time.time() - t) / (k + 1):.2f} s/item | {(time.time() - t0) / 60:.1f} min", flush=True)
+            if k % 100 == 99: save(which)
+        save(which)
+        if stop: print("time budget reached", flush=True) if rank == 0 else None; break
     dist.destroy_process_group()
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", required=True); ap.add_argument("--hf", required=True)
-    ap.add_argument("--sets", nargs="+", default=["haiku", "images"]); ap.add_argument("--haiku-per-gen", type=int, default=0)
-    ap.add_argument("--datasets", nargs="+", default=["acx", "lapis", "ava"])
+    ap.add_argument("--plan", nargs="+", default=["acx", "lapis", "haiku", "ava"]); ap.add_argument("--haiku-per-gen", type=int, default=50)
+    ap.add_argument("--max-minutes", type=float, default=1e9)
     main(ap.parse_args())
