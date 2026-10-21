@@ -1,0 +1,7 @@
+slurm/
+*.sbatch
+__pycache__/
+*.egg-info/
+reports/
+.env
+logs/

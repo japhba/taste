@@ -1,0 +1,35 @@
+[project]
+name = "taste"
+version = "0.1.0"
+description = "Do open LLMs/VLMs have taste? Ratings, hidden-state PCs and cross-model preference for haiku and images"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "torch==2.10.0",
+    "vllm==0.19.1",
+    "transformers==5.5.4",
+    "accelerate>=1.10",
+    "datasets>=3.0",
+    "huggingface-hub[hf-xet]>=1.0",
+    "pandas>=2.2",
+    "pyarrow>=17",
+    "scikit-learn>=1.5",
+    "scipy>=1.14",
+    "statsmodels>=0.14",
+    "matplotlib>=3.9",
+    "pillow>=10",
+    "openai>=1.50",
+    "python-dotenv>=1.0",
+    "tqdm>=4.66",
+    "openpyxl>=3.1",
+    "pronouncing>=0.2",
+    "wordfreq>=3.1",
+    "beautifulsoup4>=4.12",
+    "flash-linear-attention>=0.3",
+]
+
+[tool.setuptools.packages.find]
+include = ["taste*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
