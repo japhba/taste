@@ -7,7 +7,8 @@ import re, sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-REPORT = Path("/ceph/scratch/jbauer/reports/taste/taste.html")
+from taste.paths import REPORTS
+REPORT = REPORTS / "taste.html"
 OUT = REPORT.parent / "taste-files" / "slides"
 
 
@@ -24,7 +25,6 @@ def main():
             name = f"{i + 1:02d}_" + re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")[:60] + ".png"
             el.screenshot(path=str(OUT / name)); print(OUT / name)
         b.close()
-    for p in [OUT, *OUT.iterdir()]: p.chmod(0o755 if p.is_dir() else 0o644)
 
 
 if __name__ == "__main__":

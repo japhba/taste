@@ -1,6 +1,6 @@
 """Build the taste report from saved results. Every number on the page is computed here from results.json and the rating
-tables; nothing is typed in by hand. The page goes to the world-readable ceph reports folder and is symlinked into the folder
-served on 127.0.0.1:8095.
+tables; nothing is typed in by hand. The page goes to ~/taste/reports (private) and is symlinked into the folder served on
+127.0.0.1:8095.
 
   python -m taste.report
 """
@@ -218,8 +218,6 @@ def build():
     REPORTS.mkdir(parents=True, exist_ok=True); files = REPORTS / f"{NAME}-files"; files.mkdir(exist_ok=True)
     shutil.copy2(Path(__file__).parents[1] / "docs/lit_survey.md", files / "lit_survey.md")
     out = REPORTS / f"{NAME}.html"; out.write_text(page)
-    for p in [REPORTS.parent, REPORTS, files]: p.chmod(0o755)
-    for p in [out, *files.rglob("*")]: p.chmod(0o755 if p.is_dir() else 0o644)
     for target in [out, files]:
         link = SERVED / target.name
         if link.is_symlink(): link.unlink()
