@@ -12,22 +12,28 @@ from taste.common import ratings, items, fam, save, record, ANCHOR, FAMILY_COLOR
 from taste.models import BY_NAME
 from taste.probes import probe, hidden, LAYER_FRAC
 from taste.report_examples import pct, chip, haiku_card, img_card
-from taste.analysis_haiku import interaction
 
 RNG = np.random.default_rng(0)
 INK, INK2, MUTED = "#0b0b0b", "#52514e", "#8a8984"
 # judges shown on the resolution chart: Qwen ladder as an ordinal blue ramp (steps 250/400/550/700), Claude in the frontier slot
 JUDGES = {"qwen3.5-0.8b": ("Qwen3.5-0.8B", "#86b6ef"), "qwen3.5-4b": ("Qwen3.5-4B", "#3987e5"), "qwen3.5-27b": ("Qwen3.5-27B", "#1c5cab"),
           "qwen3.5-397b-a17b": ("Qwen3.5-397B", "#0d366b"), ANCHOR: ("Claude Opus 5.5", FAMILY_COLOR["frontier"])}
-NAIVE = {"575": ("naive: 5-7-5 syllable count", (0, (4, 2))), "fluency": ("naive: smooth, predictable wording", (0, (1, 1.5)))}
+QWEN = ["qwen3.5-0.8b", "qwen3.5-2b", "qwen3.5-4b", "qwen3.5-9b", "qwen3.5-27b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b"]
+GEMMA = ["gemma-4-e2b", "gemma-4-e4b", "gemma-4-26b-a4b", "gemma-4-31b"]
+CLAUDE_X = 1600  # where Claude (size unknown) sits on the size axis, right of a divider
+STEP_RAMP = {4: ["#86b6ef", "#3987e5", "#1c5cab", "#0d366b"], 3: ["#86b6ef", "#256abf", "#0d366b"]}  # darker = comparison higher up the ladder
 MODEL_RUNGS = {"≤0.4B": ["smollm2-135m", "smollm2-360m"], "0.8–1.7B": ["smollm2-1.7b", "qwen3.5-0.8b"], "2–4B": ["qwen3.5-2b", "qwen3.5-4b"],
                "9–397B": ["qwen3.5-9b", "qwen3.5-27b", "qwen3.5-35b-a3b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b"],
                "frontier": ["gpt-5.6-sol", "gemini-3.8-flash", "deepseek-v4.1-flash"]}  # Claude-written haiku left out: the Claude judge would rate its own family
 HUMAN_RUNGS = {"tweet": ["human-twaiku"], "r/haiku ≤1 upvote": ["human-reddit-low"], "r/haiku top 5%": ["human-reddit-top"], "journal": ["human-journal"]}
+TIER_TEXT = {"tweet": ("Found in a tweet", "accidental 5-7-5 lines in ordinary tweets"), "r/haiku ≤1 upvote": ("r/haiku, ≤1 upvote", "posted as a haiku, ignored by readers"),
+             "r/haiku top 5%": ("r/haiku, top 5%", "the crowd's favourites by upvotes"), "journal": ("Haiku journal", "chosen by editors for publication")}
 STEP_LABEL = {("≤0.4B", "0.8–1.7B"): "≤0.4B\nvs ~1B", ("0.8–1.7B", "2–4B"): "~1B\nvs 2–4B", ("2–4B", "9–397B"): "2–4B\nvs 9–397B",
               ("9–397B", "frontier"): "9–397B\nvs frontier", ("tweet", "r/haiku ≤1 upvote"): "tweet\nvs ≤1 vote",
               ("r/haiku ≤1 upvote", "r/haiku top 5%"): "≤1 vote\nvs top 5%", ("r/haiku top 5%", "journal"): "top 5%\nvs journal"}
 EDITORS = STEP_LABEL[("r/haiku top 5%", "journal")]
+PROFANITY = r"\b(?:fuck\w*|shit\w*|bitch\w*|cunt\w*|dick\w*|asshole\w*|damn)\b"
+FRONTIER_STEP = STEP_LABEL[("9–397B", "frontier")]
 
 
 def auc(worse, better):
@@ -44,70 +50,115 @@ def pair_html(label, a, b):
     return f'<div class="pair"><div class="pair-label">{label}</div><div class="pair-cards">{a}<span class="vs">vs</span>{b}</div></div>'
 
 
-def slide(n, tag, title, sub, chart, examples, foot):
+def slide_body(n, tag, title, sub, body, foot):
     return (f'<div class="slide finding"><div class="kicker">Finding {n} of 5 · {tag}</div><h3>{html.escape(title)}</h3><p class="sub">{sub}</p>'
-            f'<div class="fgrid"><div class="fchart"><img src="{chart}" alt=""></div><div class="fex">{examples}</div></div><p class="foot">{foot}</p></div>')
+            f'{body}<p class="foot">{foot}</p></div>')
+
+
+def slide(n, tag, title, sub, chart, examples, foot):
+    return slide_body(n, tag, title, sub, f'<div class="fgrid"><div class="fchart"><img src="{chart}" alt=""></div><div class="fex">{examples}</div></div>', foot)
 
 
 def png_uri(path):
     return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode()
 
 
-# ---------------------------------------------------------------- 1. resolution at the top
+# ---------------------------------------------------------------- 1. resolution at the top: by step, by judge size, the human ladder, and pairs
 def resolution(it, S, P):
-    F = pd.read_parquet(DATA / "haiku_features.parquet").set_index("item_id").reindex(it.index)
-    X = pd.concat([S[list(JUDGES)], pd.DataFrame({"575": -F.f_575_deviation, "fluency": ratings("haiku", "logprob_mean")["qwen3.5-27b"].reindex(it.index)})], axis=1)
     rows = []
     for panel, rungs in [("model", MODEL_RUNGS), ("human", HUMAN_RUNGS)]:
         names = list(rungs)
-        for lo, hi in zip(names[:-1], names[1:]):
+        for k, (lo, hi) in enumerate(zip(names[:-1], names[1:])):
             a, b = it.generator.isin(rungs[lo]), it.generator.isin(rungs[hi])
-            for c in X.columns:
-                w, bt = X.loc[a, c].dropna().values, X.loc[b, c].dropna().values
-                rows.append(dict(panel=panel, step=STEP_LABEL[(lo, hi)], judge=c, auc=auc(w, bt), ci=list(boot_auc(w, bt))))
+            for c in S.columns:
+                w, bt = S.loc[a, c].dropna().values, S.loc[b, c].dropna().values
+                rows.append(dict(panel=panel, k=k, lo=lo, hi=hi, step=STEP_LABEL[(lo, hi)], judge=c, auc=auc(w, bt), ci=list(boot_auc(w, bt))))
     R = pd.DataFrame(rows)
     record("finding_resolution", R.to_dict("records"))
-
+    d = R.set_index(["step", "judge"]).auc
+    titles = ["Haiku by models\nbetter = more capable writer", "Haiku by people\nbetter = more upvotes, then a journal"]
     plt.rcParams["savefig.dpi"] = 200
-    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.5), sharey=True, gridspec_kw={"width_ratios": [4, 3]}, layout="constrained")
-    for ax, panel, ttl in zip(axs, ["model", "human"], ["Haiku by models\nbetter = more capable writer", "Haiku by people (r/haiku)\nbetter = more upvotes, then a journal"]):
-        d = R[R.panel == panel]; steps = list(dict.fromkeys(d.step)); x = np.arange(len(steps))
-        ax.axhspan(0, 0.5, color="#f0efec", lw=0, zorder=0); ax.axhline(0.5, color=MUTED, lw=1)
-        for c, (lab, ls) in NAIVE.items():
-            ax.plot(x, d[d.judge == c].set_index("step").auc.reindex(steps), color=MUTED, ls=ls, lw=2, label=lab)
-        for c, (lab, col) in JUDGES.items():
-            ax.plot(x, d[d.judge == c].set_index("step").auc.reindex(steps), color=col, lw=2, marker="o", ms=6, mec="white", mew=1.2, label=lab)
-        ax.set_xticks(x, steps); ax.set_title(ttl, loc="left"); ax.set_xlim(-0.3, len(steps) - 0.7)
-    axs[0].set_ylim(0, 1); axs[0].set_ylabel("judge prefers the better haiku (AUC)")
-    axs[0].text(-0.2, 0.47, "chance", color=INK2, va="top"); axs[0].text(-0.2, 0.03, "prefers the worse one", color=INK2, va="bottom")
-    h, l = axs[0].get_legend_handles_labels(); order = [2, 3, 4, 5, 6, 0, 1]
-    fig.legend([h[i] for i in order], [l[i] for i in order], loc="outside lower center", ncol=4, frameon=False, handlelength=2.6)
-    p = save(fig, "finding_resolution")
 
-    # examples: the pair at the editors' step and the pair at the open-vs-frontier step that best show the average pattern
+    # (a) by step: one line per judge
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.6), sharey=True, gridspec_kw={"width_ratios": [4, 3]}, layout="constrained")
+    for ax, panel, ttl in zip(axs, ["model", "human"], titles):
+        dd = R[R.panel == panel]; steps = list(dict.fromkeys(dd.step)); x = np.arange(len(steps))
+        ax.axhspan(0.3, 0.5, color="#f0efec", lw=0, zorder=0); ax.axhline(0.5, color=MUTED, lw=1)
+        for c, (lab, col) in JUDGES.items():
+            ax.plot(x, dd[dd.judge == c].set_index("step").auc.reindex(steps), color=col, lw=2, marker="o", ms=6, mec="white", mew=1.2, label=lab)
+        ax.set_xticks(x, steps); ax.set_title(ttl, loc="left"); ax.set_xlim(-0.3, len(steps) - 0.7)
+    axs[0].set_ylim(0.3, 1); axs[0].set_ylabel("judge prefers the better haiku (AUC)")
+    axs[0].text(-0.2, 0.49, "chance", color=INK2, va="top"); axs[0].text(-0.2, 0.31, "prefers the worse one", color=INK2, va="bottom")
+    fig.legend(*axs[0].get_legend_handles_labels(), loc="outside lower center", ncol=3, frameon=False, handlelength=2.6)
+    pa = save(fig, "finding_resolution")
+
+    # (b) by judge size: one line per step (darker = higher up the ladder); Gemma hollow, Claude right of the divider
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.6), sharey=True, layout="constrained")
+    size = lambda r: BY_NAME[r].params_b
+    for ax, panel, ttl in zip(axs, ["model", "human"], titles):
+        dd = R[R.panel == panel]; ramp = STEP_RAMP[dd.k.nunique()]
+        ax.axhspan(0.3, 0.5, color="#f0efec", lw=0, zorder=0); ax.axhline(0.5, color=MUTED, lw=1); ax.axvline(900, color=MUTED, lw=1, ls=(0, (1, 2)))
+        for k, g in dd.groupby("k"):
+            v = g.set_index("judge").auc; col = ramp[k]
+            ax.plot([size(r) for r in QWEN], v[QWEN], color=col, lw=2, marker="o", ms=5, mec="white", mew=1, label=g.step.iloc[0].replace("\n", " "))
+            ax.plot([size(r) for r in GEMMA], v[GEMMA], ls="none", marker="o", ms=5, mfc="white", mec=col, mew=1.4)
+            ax.plot([CLAUDE_X], [v[ANCHOR]], ls="none", marker="*", ms=11, color=col, mec="white", mew=0.8)
+        ax.set_xscale("log"); ax.set_xticks([1, 10, 100, CLAUDE_X], ["1B", "10B", "100B", "Claude"]); ax.minorticks_off()
+        ax.set_title(ttl, loc="left"); ax.set_xlabel("judge size")
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), frameon=False, title="comparison (darker = higher up)", alignment="left")
+    axs[0].set_ylim(0.3, 1); axs[0].set_ylabel("judge prefers the better haiku (AUC)")
+    pb = save(fig, "finding_resolution_by_size")
+    ci = max(np.diff(c)[0] / 2 for c in R.ci)
+    sub_a = (f"Judges from 4B up tell broken haiku from passable ones. Telling good from great takes more. Frontier vs open-model haiku: "
+             f"Qwen3.5-0.8B {d[FRONTIER_STEP, 'qwen3.5-0.8b']:.2f}, Qwen3.5-397B {d[FRONTIER_STEP, 'qwen3.5-397b-a17b']:.2f}. The crowd's favourites vs journal haiku: "
+             f"Qwen3.5-0.8B prefers the crowd's ({d[EDITORS, 'qwen3.5-0.8b']:.2f}), Qwen3.5-27B leans to the editors ({d[EDITORS, 'qwen3.5-27b']:.2f}; 397B "
+             f"{d[EDITORS, 'qwen3.5-397b-a17b']:.2f}) and Claude most clearly ({d[EDITORS, ANCHOR]:.2f}).")
+    foot_a = (f"AUC = chance that the judge scores a random haiku from the better group above one from the worse group (0.5 = chance). 200 haiku per model, 120 per human tier; "
+              f"95% bootstrap intervals at most ±{ci:.2f}. Right: filled = Qwen3.5, hollow = Gemma 4, star = Claude Opus 5.5 (size unknown). Claude-written haiku are left out of the "
+              f"frontier group. Claude may have seen some journal haiku in training.")
+    s_a = slide_body(1, "Haiku", "Telling good from great takes scale", sub_a,
+                     f'<div class="fgrid two"><div class="fchart"><img src="{png_uri(pa)}" alt=""></div><div class="fchart"><img src="{png_uri(pb)}" alt=""></div></div>', foot_a)
+
+    # (b) the human ladder: three representative haiku per tier (panel score closest to the tier mean), judges' AUC between tiers
+    panel_score = P.mean(1)
+    g = it.generator
+    clean = ~it.haiku.str.contains(PROFANITY, case=False, regex=True)
+    show = {"qwen3.5-0.8b": "Qwen 0.8B", "qwen3.5-27b": "Qwen 27B", ANCHOR: "Claude"}
+    cols = []
+    for k, (tier, gens) in enumerate(HUMAN_RUNGS.items()):
+        s = panel_score[g.isin(gens)]; s = s[~it.loc[s.index, "haiku"].duplicated()]
+        rep = (s[clean[s.index]] - s.mean()).abs().nsmallest(3).index  # tier mean over all its haiku; examples skip profanity
+        name, desc = TIER_TEXT[tier]
+        cards = "".join(f'<div class="hk"><div class="poem">{html.escape(it.haiku[i])}</div><div class="chips">{chip("all judges", panel_score[i])}</div></div>' for i in rep)
+        cols.append(f'<div class="tier"><div class="tier-h"><b>{html.escape(name)}</b><span>{html.escape(desc)}</span>{chip("tier mean", s.mean())}</div>{cards}</div>')
+        if k < len(HUMAN_RUNGS) - 1:
+            step = STEP_LABEL[(tier, list(HUMAN_RUNGS)[k + 1])]
+            ch = "".join(f'<span class="chip {"hi" if d[step, r] >= 0.6 else "lo" if d[step, r] < 0.5 else ""}">{lab} {d[step, r]:.2f}</span>' for r, lab in show.items())
+            cols.append(f'<div class="step"><span class="arrow">→</span><span class="auc-h">prefers the right-hand tier</span>{ch}</div>')
+    s_b = slide_body(1, "Haiku", "The human ladder, by example", "Haiku written by people, from accidental to published. Three typical haiku per tier, "
+                     "and how often each judge prefers a haiku from the next tier up (AUC; 0.5 = chance).",
+                     f'<div class="ladder">{"".join(cols)}</div>',
+                     "Typical = the three haiku (skipping ones with profanity) whose mean percentile across all 12 judges is closest to their tier's mean. Chips on haiku: that mean percentile "
+                     "(100 = the judges' favourite of 4,480). Arrows: AUC between neighbouring tiers, 120 haiku each.")
+
+    # (c) where small and large judges part ways: the pair at the editors' step and at the open-vs-frontier step that best show the average pattern
     small, large = P["qwen3.5-0.8b"], P[["qwen3.5-27b", "qwen3.5-397b-a17b", ANCHOR]]
-    ok575 = F.f_575_deviation == 0
     def best_pair(worse, better, same_topic):
         w, b = it.index[worse], it.index[better]
         M = np.minimum((large.loc[b].values[None] - large.loc[w].values[:, None]).min(2), small.loc[w].values[:, None] - small.loc[b].values[None])
         if same_topic: M = np.where(it.topic[w].to_numpy()[:, None] == it.topic[b].to_numpy()[None], M, -np.inf)
         i, j = np.unravel_index(np.nanargmax(M), M.shape)
         return w[i], b[j]
-    g = it.generator
-    pairs = [("crowd's pick vs editors' pick", best_pair(g.isin(HUMAN_RUNGS["r/haiku top 5%"]) & ok575, g.isin(HUMAN_RUNGS["journal"]) & ~ok575, False)),
-             ("open model vs frontier model, same prompt", best_pair(g.isin(MODEL_RUNGS["9–397B"]), g.isin(MODEL_RUNGS["frontier"]), True))]
-    chips = lambda i: [chip("Qwen 0.8B", P.loc[i, "qwen3.5-0.8b"]), chip("Qwen 397B", P.loc[i, "qwen3.5-397b-a17b"]), chip("Claude", P.loc[i, ANCHOR]),
-                       f'<span class="chip">{"5-7-5" if F.f_575_deviation[i] == 0 else "not 5-7-5"}</span>']
+    pairs = [("the crowd's pick vs the editors' pick", best_pair(g.isin(HUMAN_RUNGS["r/haiku top 5%"]), g.isin(HUMAN_RUNGS["journal"]), False)),
+             ("an open model vs a frontier model, same prompt", best_pair(g.isin(MODEL_RUNGS["9–397B"]), g.isin(MODEL_RUNGS["frontier"]), True))]
+    chips = lambda i: [chip("Qwen 0.8B", P.loc[i, "qwen3.5-0.8b"]), chip("Qwen 397B", P.loc[i, "qwen3.5-397b-a17b"]), chip("Claude", P.loc[i, ANCHOR])]
     ex = "".join(pair_html(lab + (f" · “{it.topic[w]}”" if isinstance(it.topic[w], str) else ""), haiku_card(it.haiku[w], g[w], chips(w)), haiku_card(it.haiku[b], g[b], chips(b))) for lab, (w, b) in pairs)
-    d = R.set_index(["step", "judge"]).auc
-    sub = (f"Judges from 4B up, and a naive 5-7-5 check, tell broken haiku from passable ones. Between the crowd's favourites and journal haiku, the naive checks "
-           f"pick the crowd's (5-7-5 rule: AUC {d[EDITORS, '575']:.2f}), and so does Qwen3.5-0.8B ({d[EDITORS, 'qwen3.5-0.8b']:.2f}). Larger judges lean towards the "
-           f"editors (Qwen3.5-27B {d[EDITORS, 'qwen3.5-27b']:.2f}, 397B {d[EDITORS, 'qwen3.5-397b-a17b']:.2f}), Claude most clearly ({d[EDITORS, ANCHOR]:.2f}).")
-    ci = max(np.diff(c)[0] / 2 for c in R.ci)
-    foot = (f"AUC = chance that the judge scores a random haiku from the better group above one from the worse group. Groups: 200 haiku per model, 120 per human tier; "
-            f"95% bootstrap intervals are at most ±{ci:.2f}. Fluency = mean log-probability of the words under Qwen3.5-27B. Examples: the pair where the large judges "
-            f"and Qwen3.5-0.8B disagree most in the typical direction. Chips: percentile within each judge (100 = its favourite of 4,480). Claude may have seen some journal haiku in training.")
-    return slide(1, "Haiku", "Telling good from great takes scale; a naive reading gets it backwards", sub, png_uri(p), ex, foot)
+    s_c = slide_body(1, "Haiku", "Where small and large judges part ways",
+                     "The smallest judge prefers the plainer, more sentimental haiku; the large judges and Claude prefer the compressed, concrete one.",
+                     f'<div class="pairs-wide">{ex}</div>',
+                     "Examples: among all pairs at that step, the one where the large judges (Qwen3.5-27B, Qwen3.5-397B, Claude) and Qwen3.5-0.8B disagree most in the typical direction. "
+                     "Chips: percentile within each judge (100 = its favourite of 4,480).")
+    return [s_a, s_b, s_c]
 
 
 # ---------------------------------------------------------------- 2. the same craft axis in two model families
@@ -291,6 +342,15 @@ CSS = """
 .finding h3{font-size:1.6rem;line-height:1.2;margin-bottom:6px}.finding .sub{font-size:.95rem;line-height:1.4;margin-bottom:12px}
 .fgrid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:22px;flex:1;align-items:center}
 .fchart img{width:100%;display:block;background:#fff;border-radius:8px}
+.fgrid.two{grid-template-columns:1fr 1fr}
+.ladder{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 86px minmax(0,1fr) 86px minmax(0,1fr) 86px minmax(0,1fr);gap:8px;align-items:start}
+.ladder .tier{display:flex;flex-direction:column;gap:8px}
+.ladder .tier-h{display:flex;flex-direction:column;gap:2px;padding-bottom:4px;border-bottom:2px solid var(--border)}
+.ladder .tier-h b{font-size:.98rem}.ladder .tier-h span{font-size:.76rem;color:var(--ink2)}.ladder .tier-h .chip{align-self:flex-start;margin-top:3px}
+.ladder .step{display:flex;flex-direction:column;align-items:stretch;gap:4px;align-self:center;text-align:center}
+.ladder .step .arrow{font-size:1.6rem;color:var(--muted);line-height:1}.ladder .step .auc-h{font-size:.66rem;color:var(--muted);line-height:1.2}
+.ladder .step .chip{font-size:.68rem;padding:1px 4px}.ladder .poem{font-size:1.08rem;line-height:1.45}.ladder .hk{padding:12px 14px}.ladder{align-content:center}
+.pairs-wide{flex:1;display:flex;flex-direction:column;justify-content:center;gap:22px}.pairs-wide .poem{font-size:1.35rem;line-height:1.45}.pairs-wide .hk{padding:16px 22px}.pairs-wide .chip{font-size:.8rem}
 .fex{display:flex;flex-direction:column;gap:12px}
 .pair-label{font-size:.82rem;font-weight:650;color:var(--ink2);margin:0 0 5px}
 .pair-cards{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:6px;align-items:stretch}
@@ -305,7 +365,7 @@ CSS = """
 def build():
     it = items("haiku"); S = ratings("haiku").reindex(it.index); P = pct(S)
     ii = items("images"); Si = ratings("images").reindex(ii.index)
-    return [resolution(it, S, P), craft_axis(it, S, P), know_more(it, S, P), loyalty(it, S, P), acx(Si, ii)], CSS
+    return [*resolution(it, S, P), craft_axis(it, S, P), know_more(it, S, P), loyalty(it, S, P), acx(Si, ii)], CSS
 
 
 if __name__ == "__main__":

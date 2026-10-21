@@ -13,7 +13,7 @@ import pandas as pd
 from taste.common import ratings, items, fam, rater_order, generator_order, ANCHOR, RESULTS
 from taste.paths import DATA, PLOTS, REPORTS, ROOT
 from taste.report_katex import stylesheet, typeset
-from taste import report_examples, findings
+from taste import report_examples, findings, intro
 
 SERVED = Path.home() / "generative-learning/reports"
 NAME = "taste"
@@ -90,6 +90,7 @@ def build():
     craft_summary = "; ".join(f"{k.split('/')[1]}: “{v['labels'][v['top'][0]]['low']}” → “{v['labels'][v['top'][0]]['high']}” (label check {pct(v['labels'][v['top'][0]]['label_accuracy'])})" for k, v in craft)
     ex, ex_css = report_examples.build()
     fs, fs_css = findings.build()
+    ins, in_css = intro.build()
     res = pd.DataFrame(json.loads(RESULTS.read_text())["finding_resolution"]).set_index(["step", "judge"]).auc
     built = datetime.now(ZoneInfo("Europe/London")).strftime("%d %B %Y, %H:%M %Z")
     n_haiku, n_gen = len(hi), hi.generator.nunique()
@@ -108,6 +109,11 @@ def build():
 <div class="tile"><strong>{f2(acx_claude)}</strong><span>{ANCHOR}'s preference for AI art on ACX (pct-rank AI − human; ACX crowd {f2(pref['humans (favourite share)'])})</span></div>
 </div>
 </header>
+
+<section id="intro">
+<h2>Intro: what is taste?</h2>
+{"".join(ins)}
+</section>
 
 <section id="findings">
 <h2>Five findings, one slide each</h2>
@@ -220,7 +226,7 @@ def build():
 </section>
 <footer>Built {built} by <code>taste/report.py</code> from <code>{RESULTS}</code>. Literature survey: <a href="{NAME}-files/lit_survey.md">lit_survey.md</a>.</footer>
 """
-    css = (Path(__file__).parent / "report.css").read_text() + "\nfigure img{background:#fff;border-radius:8px;max-width:100%;display:block}\n" + ex_css + fs_css
+    css = (Path(__file__).parent / "report.css").read_text() + "\nfigure img{background:#fff;border-radius:8px;max-width:100%;display:block}\n" + ex_css + fs_css + in_css
     page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate"><meta http-equiv="pragma" content="no-cache"><meta http-equiv="expires" content="0">
 <title>Taste in language models</title><style>{stylesheet()}</style><style>{css}</style></head><body><main>{typeset(body)}</main></body></html>"""

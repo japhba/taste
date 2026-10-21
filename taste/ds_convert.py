@@ -5,7 +5,7 @@ never reads another rank's experts. Renaming and sharding are copied verbatim fr
 
   python -m taste.ds_convert --hf DIR --out DIR --rank 0 [--mp 8]
 """
-import argparse, importlib.util, json, os, shutil, time
+import argparse, importlib.util, json, os, resource, shutil, time
 from collections import defaultdict
 import torch
 from safetensors.torch import save_file
@@ -53,13 +53,13 @@ def convert(HF, TP, rank, MP=8, expert_dtype="fp4"):
                 if "experts" in name and "shared_experts" not in name: new_param = param
                 elif ".engram.embed." in name:
                     shard = (param.size(0) + mp - 1) // mp
-                    new_param = param[i * shard:(i + 1) * shard].contiguous()
+                    new_param = param[i * shard:(i + 1) * shard].clone(memory_format=torch.contiguous_format)  # a view would pin the whole tensor
                     if new_param.size(0) < shard:
                         new_param = torch.cat([new_param, param.new_full((shard - new_param.size(0), param.size(1)), 1 if name.endswith(".scale") else 0)])
                 elif dim is not None:
                     assert param.size(dim) % mp == 0, (name, dim)
                     shard = param.size(dim) // mp
-                    new_param = param.narrow(dim, i * shard, shard).contiguous()
+                    new_param = param.narrow(dim, i * shard, shard).clone(memory_format=torch.contiguous_format)
                 else: new_param = param
                 sd[name] = new_param
     for name in list(sd):
@@ -77,7 +77,7 @@ def convert(HF, TP, rank, MP=8, expert_dtype="fp4"):
     if i == 0:
         for fn in ["tokenizer.json", "tokenizer_config.json"]: shutil.copyfile(f"{HF}/{fn}", f"{TP}/{fn}")
     gb = os.path.getsize(f"{TP}/model{i}-mp{mp}.safetensors") / 1e9
-    print(f"rank {i}: {len(sd)} tensors, {gb:.1f} GB in {time.time() - t:.0f} s", flush=True)
+    print(f"rank {i}: {len(sd)} tensors, {gb:.1f} GB in {time.time() - t:.0f} s, peak RSS {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6:.0f} GB", flush=True)
     return gb
 
 
