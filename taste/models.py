@@ -29,6 +29,8 @@ MODELS = [
     M("gemma-4-e4b", "gemma", 8, 4, hf="google/gemma-4-E4B-it"),
     M("gemma-4-26b-a4b", "gemma", 26, 4, hf="google/gemma-4-26b-a4b-it", api="google/gemma-4-26b-a4b-it"),
     M("gemma-4-31b", "gemma", 31, 31, hf="google/gemma-4-31B-it", api="google/gemma-4-31b-it"),
+    # rated with DeepSeek's reference inference code on 8 GPUs (taste.ds_rate), with hidden states; active size not published
+    M("deepseek-v4.1-flash-1017", "deepseek", 763, float("nan")),
     # frontier (closed) generators / anchor judges; sizes unknown -> nan
     M("deepseek-v4.1-flash", "deepseek", float("nan"), float("nan"), api="deepseek/deepseek-v4.1-flash"),
     M("gemini-3.8-flash", "gemini", float("nan"), float("nan"), api="google/gemini-3.8-flash"),

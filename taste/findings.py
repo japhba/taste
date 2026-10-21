@@ -18,6 +18,7 @@ INK, INK2, MUTED = "#0b0b0b", "#52514e", "#8a8984"
 # judges shown on the resolution chart: Qwen ladder as an ordinal blue ramp (steps 250/400/550/700), Claude in the frontier slot
 JUDGES = {"qwen3.5-0.8b": ("Qwen3.5-0.8B", "#86b6ef"), "qwen3.5-4b": ("Qwen3.5-4B", "#3987e5"), "qwen3.5-27b": ("Qwen3.5-27B", "#1c5cab"),
           "qwen3.5-397b-a17b": ("Qwen3.5-397B", "#0d366b"), ANCHOR: ("Claude Opus 5.5", FAMILY_COLOR["frontier"])}
+DS, DS_LABEL, DS_COLOR = "deepseek-v4.1-flash-1017", "DeepSeek-V4.1-Flash", "#e87ba4"  # magenta (categorical slot 5), always with a diamond and a text label
 QWEN = ["qwen3.5-0.8b", "qwen3.5-2b", "qwen3.5-4b", "qwen3.5-9b", "qwen3.5-27b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b"]
 GEMMA = ["gemma-4-e2b", "gemma-4-e4b", "gemma-4-26b-a4b", "gemma-4-31b"]
 CLAUDE_X = 1600  # where Claude (size unknown) sits on the size axis, right of a divider
@@ -86,6 +87,8 @@ def resolution(it, S, P):
         ax.axhspan(0.3, 0.5, color="#f0efec", lw=0, zorder=0); ax.axhline(0.5, color=MUTED, lw=1)
         for c, (lab, col) in JUDGES.items():
             ax.plot(x, dd[dd.judge == c].set_index("step").auc.reindex(steps), color=col, lw=2, marker="o", ms=6, mec="white", mew=1.2, label=lab)
+        if DS in S.columns:
+            ax.plot(x, dd[dd.judge == DS].set_index("step").auc.reindex(steps), color=DS_COLOR, lw=2, marker="D", ms=6, mec="white", mew=1.2, label=f"{DS_LABEL} (763B)")
         ax.set_xticks(x, steps); ax.set_title(ttl, loc="left"); ax.set_xlim(-0.3, len(steps) - 0.7)
     axs[0].set_ylim(0.3, 1); axs[0].set_ylabel("judge prefers the better haiku (AUC)")
     axs[0].text(-0.2, 0.49, "chance", color=INK2, va="top"); axs[0].text(-0.2, 0.31, "prefers the worse one", color=INK2, va="bottom")
@@ -103,6 +106,7 @@ def resolution(it, S, P):
             ax.plot([size(r) for r in QWEN], v[QWEN], color=col, lw=2, marker="o", ms=5, mec="white", mew=1, label=g.step.iloc[0].replace("\n", " "))
             ax.plot([size(r) for r in GEMMA], v[GEMMA], ls="none", marker="o", ms=5, mfc="white", mec=col, mew=1.4)
             ax.plot([CLAUDE_X], [v[ANCHOR]], ls="none", marker="*", ms=11, color=col, mec="white", mew=0.8)
+            if DS in S.columns: ax.plot([size(DS)], [v[DS]], ls="none", marker="D", ms=6, color=col, mec=DS_COLOR, mew=1.6)
         ax.set_xscale("log"); ax.set_xticks([1, 10, 100, CLAUDE_X], ["1B", "10B", "100B", "Claude"]); ax.minorticks_off()
         ax.set_title(ttl, loc="left"); ax.set_xlabel("judge size")
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), frameon=False, title="comparison (darker = higher up)", alignment="left")
@@ -138,7 +142,7 @@ def resolution(it, S, P):
     s_b = slide_body(1, "Haiku", "The human ladder, by example", "Haiku written by people, from accidental to published. Three typical haiku per tier, "
                      "and how often each judge prefers a haiku from the next tier up (AUC; 0.5 = chance).",
                      f'<div class="ladder">{"".join(cols)}</div>',
-                     "Typical = the three haiku (skipping ones with profanity) whose mean percentile across all 12 judges is closest to their tier's mean. Chips on haiku: that mean percentile "
+                     f"Typical = the three haiku (skipping ones with profanity) whose mean percentile across all {P.shape[1]} judges is closest to their tier's mean. Chips on haiku: that mean percentile "
                      "(100 = the judges' favourite of 4,480). Arrows: AUC between neighbouring tiers, 120 haiku each.")
 
     # (c) where small and large judges part ways: the pair at the editors' step and at the open-vs-frontier step that best show the average pattern
@@ -178,9 +182,13 @@ def craft_axis(it, S, P):
 
     fig, ax = plt.subplots(figsize=(5.0, 4.0), layout="constrained")
     ax.axhline(0, color=MUTED, lw=1)
-    for f, d in D.groupby("family"):
+    for f, d in D[D.family.isin(["qwen", "gemma"])].groupby("family"):
         ax.plot(d.params_b, d.rho_qwen_axis, color=FAMILY_COLOR[f], lw=2, marker="o", ms=6, mec="white", mew=1.2, label=f"{f.capitalize()} judges · axis found in Qwen3.5-27B")
         ax.plot(d.params_b, d.rho_gemma_axis, color=FAMILY_COLOR[f], lw=2, ls=(0, (4, 2)), marker="s", ms=5, mec="white", mew=1, label=f"{f.capitalize()} judges · axis found in Gemma-4-31B")
+    if DS in D.judge.values:
+        r = D.set_index("judge").loc[DS]
+        ax.plot([r.params_b] * 2, [r.rho_qwen_axis, r.rho_gemma_axis], ls="none", marker="D", ms=6, color=DS_COLOR, mec="white", mew=1)
+        ax.annotate(DS_LABEL, (r.params_b, max(r.rho_qwen_axis, r.rho_gemma_axis)), xytext=(0, 8), textcoords="offset points", ha="center", color=INK2)
     ax.axhline(q["rater_pc_rho"][kq][ANCHOR], color=FAMILY_COLOR["frontier"], lw=1.5, ls=(0, (1, 1.5)))
     ax.text(0.75, q["rater_pc_rho"][kq][ANCHOR] + 0.02, "Claude Opus 5.5", color=INK2, va="bottom")
     ax.set_xscale("log"); ax.set_xlabel("judge size (billion parameters)"); ax.set_ylabel("ρ between judge's rating and the axis")
@@ -216,11 +224,16 @@ def know_more(it, S, P):
     D["params_b"] = D.index.map(lambda r: BY_NAME[r].params_b); D["family"] = D.index.map(fam); D = D.sort_values("params_b")
     fig, ax = plt.subplots(figsize=(5.0, 4.0), layout="constrained")
     ax.axhline(0, color=MUTED, lw=1)
-    for f, g in D.groupby("family"):
+    for f, g in D[D.family.isin(["qwen", "gemma"])].groupby("family"):
         c = FAMILY_COLOR[f]
         ax.fill_between(g.params_b, g.verbal, g.probe, color=c, alpha=0.12, lw=0)
         ax.plot(g.params_b, g.probe, color=c, lw=2, marker="o", ms=6, mec="white", mew=1.2, label=f"{f.capitalize()}: read from its hidden states")
         ax.plot(g.params_b, g.verbal, color=c, lw=2, ls=(0, (4, 2)), marker="o", ms=6, mfc="white", mec=c, mew=1.5, label=f"{f.capitalize()}: what it says (its rating)")
+    if DS in D.index:
+        r = D.loc[DS]
+        ax.plot([r.params_b], [r.probe], ls="none", marker="D", ms=7, color=DS_COLOR, mec="white", mew=1)
+        ax.plot([r.params_b], [r.verbal], ls="none", marker="D", ms=7, mfc="white", mec=DS_COLOR, mew=1.6)
+        ax.annotate(DS_LABEL, (r.params_b, max(r.probe, r.verbal)), xytext=(0, 8), textcoords="offset points", ha="center", color=INK2)
     ax.set_xscale("log"); ax.set_xlabel("judge size (billion parameters)"); ax.set_ylabel("ρ with Claude's rating on unseen haiku")
     fig.legend(loc="outside lower center", ncol=2, frameon=False, handlelength=2.6)
     p = save(fig, "finding_know_more")
@@ -305,6 +318,7 @@ def acx(Si, ii):
            ("People: majority vote", det["humans: crowd majority"], np.nan, FAMILY_COLOR["human"])]
     for r, lab in [("qwen3.5-397b-a17b", "Qwen3.5-397B"), ("gemma-4-31b", "Gemma-4-31B")]:
         who.append((lab, det[r], pref[r], FAMILY_COLOR[fam(r)]))
+    if DS in det: who.append((DS_LABEL, det[DS], pref[DS], DS_COLOR))
     who.append(("Claude Opus 5.5", det[ANCHOR], pref[ANCHOR], FAMILY_COLOR["frontier"]))
     fig, axs = plt.subplots(1, 2, figsize=(5.8, 3.2), sharey=True)
     y = np.arange(len(who))

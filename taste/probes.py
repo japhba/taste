@@ -62,14 +62,15 @@ def image_splits(it):
 def evaluate(which, rater, pool, layer_idx, it, S, targets, splits, confounds):
     ids, layers, H = hidden(which, rater, pool)
     X = H[:, layer_idx].astype(np.float32)
-    pos = pd.Series(np.arange(len(ids)), index=ids)
+    pos = pd.Series(np.arange(len(ids)), index=ids); have = it.index.isin(ids)
     rows = []
     for split, tgt, folds in splits(it):
         y = targets[tgt] if tgt != "self" else S[rater]
+        folds = [(tr[tr & y.notna() & have].index, te[te & y.notna() & have].index) for tr, te in folds]  # raters may cover only part of the items
+        if any(len(tr) == 0 or len(te) == 0 for tr, te in folds): continue  # e.g. a rater that never saw AVA has no AVA split
         for ctl in [False, True]:
             pred, truth, verbal = [], [], []
             for tr, te in folds:
-                tr, te = tr[tr & y.notna()].index, te[te & y.notna()].index
                 C = confounds.loc[:, rater] if ctl else None
                 p = probe(X[pos[tr]], y[tr].values, X[pos[te]], *(None, None) if C is None else (C.loc[tr].values, C.loc[te].values))
                 pred.append(p); truth.append(y[te].values); verbal.append(S.loc[te, rater].values)

@@ -102,7 +102,7 @@ def build():
 <header>
 <div class="eyebrow">Taste in language models · {built}</div>
 <h1>Do language models have taste?</h1>
-<p class="lede">Open Qwen3.5 and Gemma 4 models from 0.8B to 31B parameters, plus Qwen3.5-122B/397B and Claude Opus 5.5 through an API, rated {n_haiku:,} haiku from {n_gen - 4} models and four human tiers, and {len(ii):,} images with human ratings (AVA photos, LAPIS art, the ACX AI Art Turing Test). We read each rating from the model's next-token probabilities and kept its hidden states.</p>
+<p class="lede">Open Qwen3.5 and Gemma 4 models from 0.8B to 31B parameters, plus Qwen3.5-122B/397B and Claude Opus 5.5 through an API{', and DeepSeek-V4.1-Flash (763B) on our own GPUs with its hidden states' if 'deepseek-v4.1-flash-1017' in Sh.columns else ''}, rated {n_haiku:,} haiku from {n_gen - 4} models and four human tiers, and {len(ii):,} images with human ratings (AVA photos, LAPIS art, the ACX AI Art Turing Test). We read each rating from the model's next-token probabilities and kept its hidden states.</p>
 <div class="tiles">
 <div class="tile"><strong>{f2(res[findings.EDITORS, "qwen3.5-0.8b"])} → {f2(res[findings.EDITORS, ANCHOR])}</strong><span>chance that the judge prefers a journal haiku to a top-voted r/haiku one: Qwen3.5-0.8B → Claude Opus 5.5</span></div>
 <div class="tile"><strong>#{journal_rank} of {len(by_gen)}</strong><span>rank of published journal haiku under the open-model consensus (anchor judge: #{int((anchor_gen > anchor_gen['human-journal']).sum()) + 1})</span></div>
