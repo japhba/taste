@@ -41,7 +41,9 @@ def generator_order(names):
 def ratings(which, col="score"):
     """items x raters matrix of `col` (raters whose files lack `col`, e.g. API raters for logprob_mean, are left out)."""
     dfs = {p.stem: pd.read_parquet(p).set_index("item_id") for p in sorted((RATINGS / which).glob("*.parquet"))}
-    return pd.DataFrame({k: d[col] for k, d in dfs.items() if col in d})
+    # local raters: a score read from < 50% digit probability is not a rating (the model answered something else)
+    mask = lambda d: d[col].where(d.digit_mass >= 0.5) if col == "score" and "n_item_tokens" in d else d[col]
+    return pd.DataFrame({k: mask(d) for k, d in dfs.items() if col in d})
 
 
 def ratings_long(which):

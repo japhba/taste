@@ -82,6 +82,11 @@ def build():
                              "label check (held-out pairs)": l.get("label_accuracy", np.nan), "closest hand-made feature": f"{best_f.removeprefix('f_')} (ρ={fr[best_f]:+.2f})" if len(fr) else "–"})
     labs = pd.DataFrame(lab_rows)
 
+    qwen_local = [r for r in local if fam(r) == "qwen"]
+    smallest, largest_local = qwen_local[0], qwen_local[-1]
+    largest_api = max((r for r in sc.index if r not in local and fam(r) == "qwen"), key=lambda r: sc.loc[r].params_b)
+    craft = [(k, v) for k, v in pcs.items() if k.startswith("haiku-craft/")]
+    craft_summary = "; ".join(f"{k.split('/')[1]}: “{v['labels'][v['top'][0]]['low']}” → “{v['labels'][v['top'][0]]['high']}” (label check {pct(v['labels'][v['top'][0]]['label_accuracy'])})" for k, v in craft)
     built = datetime.now(ZoneInfo("Europe/London")).strftime("%d %B %Y, %H:%M %Z")
     n_haiku, n_gen = len(hi), hi.generator.nunique()
     cross = cm[(cm.pool == "last") & (cm.direction == "haiku → images")].pivot(index="rater", columns="test", values="rho")
@@ -99,6 +104,19 @@ def build():
 <div class="tile"><strong>{f2(acx_claude)}</strong><span>{ANCHOR}'s preference for AI art on ACX (pct-rank AI − human; ACX crowd {f2(pref['humans (favourite share)'])})</span></div>
 </div>
 </header>
+
+<section id="summary">
+<h2>Summary</h2>
+<ol class="takeaways">
+<li><b>Judging taste scales, then saturates.</b> Agreement with the anchor judge on haiku rises from ρ = {f2(sc.loc[smallest].rho_anchor)} ({smallest}) to {f2(sc.loc[largest_local].rho_anchor)} ({largest_local}) and stays at {f2(sc.loc[largest_api].rho_anchor)} for {largest_api}. The smallest judge is worse than chance at telling journal haiku from tweets (AUC {f2(sc.loc[smallest].auc_journal_vs_twaiku)}).</li>
+<li><b>Models share taste far more than people do.</b> {pct(icc_i['lapis']['models'])} of a single model's rating of an artwork is shared with the model panel; for a single human it is {pct(icc_i['lapis']['humans'])} (AVA photos: {pct(icc_i['ava']['models'])} vs {pct(icc_i['ava']['humans'])}).</li>
+<li><b>The beholder effect is about capability, not family.</b> Raters do not favour their own family (contrast {beh['family_contrast']:+.3f} z). Instead small judges prefer small writers and large judges large ones: the link between a judge's size and its preference for bigger writers is ρ = {beh['assortative_rho_across_raters']:+.2f} across judges.</li>
+<li><b>Small models know more than they say.</b> On far-OOD haiku, a linear probe on {smallest}'s hidden states reaches ρ = {f2(pv.loc[smallest, 'haiku: probe'])} where its own rating gets {f2(pv.loc[smallest, 'haiku: verbal'])}; for {largest_local} the two meet ({f2(pv.loc[largest_local, 'haiku: probe'])} vs {f2(pv.loc[largest_local, 'haiku: verbal'])}).</li>
+<li><b>What the big judges reward, with topic held fixed:</b> {craft_summary}.</li>
+<li><b>A verdict axis shared by text and images appears with scale:</b> a haiku-trained probe read out at the answer position predicts human art ratings on LAPIS at up to ρ = {f2(cross.lapis.max())} ({cross.lapis.idxmax()}), small models ≈ 0.</li>
+<li><b>Open models slightly prefer AI art; {ANCHOR} strongly prefers human art and spots AI images {pct(det.get(ANCHOR, np.nan))} of the time</b> (median human {pct(det['humans: median respondent'])}), but it also names most of the human artworks.</li>
+</ol>
+</section>
 
 <section id="setup">
 <h2>Setup</h2>
@@ -128,7 +146,8 @@ def build():
 {table(ga)}
 <h3>The ACX AI Art Turing Test</h3>
 {fig("acx_preference_detection", "Left: do raters rank AI images above human ones? Right: accuracy of the human-vs-AI call. Human median respondent and crowd majority from the 11k ACX responses.")}
-<p>{ANCHOR} calls the origin of {pct(det.get(ANCHOR, np.nan))} of the 50 images correctly (median human {pct(det['humans: median respondent'])}) and rates AI images far lower than human ones. It also names the artist of most of the human works, so recognition of canonical paintings and the public answer key (online since November 2024) are live confounds.</p>
+<p>{ANCHOR} calls the origin of {pct(det.get(ANCHOR, np.nan))} of the 50 images correctly (median human {pct(det['humans: median respondent'])}) and rates AI images far lower than human ones. It also names the artist of most of the human works, so recognition of canonical paintings and the public answer key (online since November 2024) are live confounds. Split by what the rater recognised (mean percentile rank; the crowd's rank for the same images alongside):</p>
+{table(pd.DataFrame(R["acx_recognition"]).set_index(["rater", "group"]).rename(columns={"rater_pct_rank": "rater's rank", "crowd_pct_rank": "crowd's rank"}).reset_index(level=1), index=True)}
 </section>
 
 <section id="shared">
@@ -144,11 +163,14 @@ def build():
 {fig("haiku_beholder", "Interaction term (z). Boxes: a model rating its own haiku.")}
 <p>Own-family contrast (Qwen raters on Qwen haiku + Gemma on Gemma − cross terms) = {beh['family_contrast']:+.3f} z, 95% CI [{beh['family_contrast_ci95'][0]:+.3f}, {beh['family_contrast_ci95'][1]:+.3f}]; mean self-rating residual {beh['self_pref'][0]:+.3f} z over {beh['self_pref'][1]} self-pairs. After regressing out each rater's log-probability of the haiku and its length: contrast {beh['family_contrast_familiarity_controlled']:+.3f}, self {beh['self_pref_familiarity_controlled'][0]:+.3f}.</p>
 {fig("haiku_beholder_familiarity_controlled", "The same after the familiarity control.")}
+<h3>Assortative taste</h3>
+<p>The structure in the matrix is not family but capability. For each rater, correlate its leftover preference (the row above) with log generator size: small judges like small writers more than everyone else does, large judges like large writers. Across raters, that correlation rises with the rater's own size (Spearman ρ = {beh['assortative_rho_across_raters']:+.2f}).</p>
+{fig("haiku_assortative", "Per rater: Spearman ρ between its interaction row and log generator size (open generators of known size).", "60%")}
 </section>
 
 <section id="features">
 <h2>5 · What do the judges reward? Unsupervised axes</h2>
-<p>PCA (20 components) of a reference model's item representation (mean over the item's tokens, at ⅔ depth). For each PC we ask which raters reward it, let {ANCHOR} name its two poles from 12 extreme items each, and check the name on 20 held-out pairs: given only the label, can it tell which item is higher?</p>
+<p>PCA (20 components) of a reference model's item representation (mean over the item's tokens, at ⅔ depth). For each PC we ask which raters reward it, let {ANCHOR} name its two poles from 12 extreme items each, and check the name on 20 held-out pairs: given only the label, can it tell which item is higher? Raw haiku axes mostly track the topic (absence and empty rooms vs. delicate nature), so the <b>haiku-craft</b> rows repeat the analysis on model haiku only, with each topic's mean removed from the representations and the scores: what is left is how a haiku is written, not what it is about.</p>
 {table(labs, index=False)}
 {"".join(fig(f"pc_rater_profile_{k.replace('/', '_')}", f"{k.split('/')[0]}: Spearman ρ of every rater's score with {k.split('/')[1]}'s PCs (oriented so + = what that model rates higher).") for k in pcs)}
 <h3>Pareto frontiers</h3>

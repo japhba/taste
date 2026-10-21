@@ -3,7 +3,7 @@ validated on held-out forced choices; correlation with hand-crafted features; Pa
 
   python -m taste.pcs [--no-label]
 """
-import argparse, base64, io, json
+import argparse, base64, io, json, re
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
@@ -22,10 +22,14 @@ RNG = np.random.default_rng(0)
 DATASET_COLOR = {"acx-ai": "#6250d6", "acx-human": "#1baf7a", "lapis": "#eb6834", "ava": "#2a78d6"}
 
 
-def basis(which, rater):
+def basis(which, rater, keep=None, demean_by=None):
+    """PCA of the item representation; `keep` restricts the items, `demean_by` removes group (e.g. topic) means first."""
     ids, layers, H = hidden(which, rater, "mean")
     li = int(np.argmin(np.abs(layers - LAYER_FRAC * layers.max())))
-    X = H[:, li].astype(np.float32); X = (X - X.mean(0)) / (X.std(0) + 1e-6)
+    X = H[:, li].astype(np.float32)
+    if keep is not None: m = keep.reindex(ids).to_numpy(bool); ids, X = ids[m], X[m]
+    if demean_by is not None: X = X - pd.DataFrame(X).groupby(demean_by.reindex(ids).to_numpy()).transform("mean").to_numpy()
+    X = (X - X.mean(0)) / (X.std(0) + 1e-6)
     pca = PCA(N_PC, random_state=0).fit(X)
     return pd.DataFrame(pca.transform(X), index=ids, columns=[f"PC{k + 1}" for k in range(N_PC)]), pca.explained_variance_ratio_
 
@@ -57,8 +61,13 @@ def ask(client, content):
     return r.choices[0].message.content.strip(), r.usage.model_extra.get("cost", 0.0)
 
 
-def label_pc(client, which, it, pc):
-    """pc: Series (oriented). Exemplars from one random half of the items, validation pairs from the other half."""
+LABEL_CACHE = DATA / "pc_labels.json"
+
+
+def label_pc(client, which, it, pc, cache_key):
+    """pc: Series (oriented). Exemplars from one random half of the items, validation pairs from the other half.
+    The name is cached in LABEL_CACHE (keyed by set/reference/PC) so re-validation does not pay for re-labelling."""
+    cache = json.loads(LABEL_CACHE.read_text()) if LABEL_CACHE.exists() else {}
     half = pd.Series(RNG.random(len(pc)) < 0.5, index=pc.index)
     ex, va = pc[half], pc[~half]
     hi, lo = ex.nlargest(N_EXEMPLAR).index, ex.nsmallest(N_EXEMPLAR).index
@@ -71,8 +80,11 @@ def label_pc(client, which, it, pc):
     else:
         content = [{"type": "text", "text": intro + "\nFirst image: HIGH group. Second image: LOW group."},
                    img_part(sheet(it.loc[hi, "path"])), img_part(sheet(it.loc[lo, "path"]))]
-    txt, cost = ask(client, content)
-    lab = json.loads(txt[txt.index("{"): txt.rindex("}") + 1])
+    if cache_key in cache: lab, cost = cache[cache_key], 0.0
+    else:
+        txt, cost = ask(client, content)
+        lab = json.loads(txt[txt.index("{"): txt.rindex("}") + 1])
+        cache[cache_key] = lab; LABEL_CACHE.write_text(json.dumps(cache, indent=1))
     q = va.quantile([0.2, 0.8]); top, bot = va[va >= q[0.8]].index, va[va <= q[0.2]].index
     pairs = [(RNG.choice(top), RNG.choice(bot), RNG.random() < 0.5) for _ in range(N_PAIRS)]
 
@@ -82,7 +94,8 @@ def label_pc(client, which, it, pc):
         if which == "haiku": c = f"{lead}\n\nA:\n{it.loc[a, 'haiku']}\n\nB:\n{it.loc[b, 'haiku']}"
         else: c = [{"type": "text", "text": lead + " First image = A, second image = B."}, img_part(thumb(it.loc[a, "path"], 384)), img_part(thumb(it.loc[b, "path"], 384))]
         ans, cst = ask(client, c)
-        return (ans.strip().upper()[:1] == ("A" if h_first else "B")), cst
+        m = re.search(r"\b([AB])\b", ans)  # answers come as 'A', '**B**', 'Image A', ...
+        return (m is not None and m.group(1) == ("A" if h_first else "B")), cst
     with ThreadPoolExecutor(8) as ex_: res = list(ex_.map(judge, pairs))
     return dict(**lab, label_accuracy=float(np.mean([r[0] for r in res])), cost=cost + sum(r[1] for r in res))
 
@@ -100,7 +113,7 @@ def plot_pareto(which, ref, B, top, labels, score, grp):
     a, b = top[:2]
     P = B[[a, b]].to_numpy(); m = pareto_mask(P)
     fig, ax = plt.subplots(figsize=(7.5, 6))
-    colors = FAMILY_COLOR if which == "haiku" else DATASET_COLOR
+    colors = FAMILY_COLOR if which.startswith("haiku") else DATASET_COLOR
     for g in grp.unique():
         s = (grp == g).to_numpy()
         ax.scatter(P[s, 0], P[s, 1], s=10, alpha=0.35, color=colors[g], marker=FAMILY_MARKER.get(g, "o"), label=f"{g} ({int((s & m).sum())} on front)", lw=0)
@@ -116,27 +129,33 @@ def plot_pareto(which, ref, B, top, labels, score, grp):
 def main(do_label):
     client = openrouter() if do_label else None
     out = {}
-    for which in ["haiku", "images"]:
+    # 'haiku-craft': model haiku only, topic means removed from representations and scores (what is left is how, not what)
+    for variant in ["haiku", "images", "haiku-craft"]:
+        which = variant.split("-")[0]
         it = items(which); S = ratings(which).reindex(it.index); grp = group(which, it)
+        keep = demean = None
+        if variant == "haiku-craft":
+            keep = it.topic.notna(); it, S, grp = it[keep], S[keep], grp[keep]; demean = it.topic
+            S = S - S.groupby(it.topic).transform("mean")
         feats = pd.read_parquet(DATA / f"{which}_features.parquet").set_index("item_id").reindex(it.index)
         local = rater_order([p.stem for p in (ROOT / "hidden" / which).glob("*.npz")])
         refs = [max((r for r in local if fam(r) == f), key=lambda r: local.index(r)) for f in ["qwen", "gemma"]]
         for ref in refs:
-            B, evr = basis(which, ref); B = B.reindex(it.index)
+            B, evr = basis(which, ref, keep, demean); B = B.reindex(it.index)
             R = pd.DataFrame({r: [stats.spearmanr(B[k], S[r], nan_policy="omit").statistic for k in B] for r in S.columns}, index=B.columns).T
             top = R.loc[ref].abs().sort_values(ascending=False).index[:N_LABEL].tolist()
             for k in B: B[k] *= np.sign(R.loc[ref, k]); R[k] *= np.sign(R.loc[ref, k])  # +PC = what ref rates higher
             F = pd.DataFrame({k: [stats.spearmanr(B[k], feats[f], nan_policy="omit").statistic for f in feats] for k in top}, index=feats.columns)
-            labels = {k: label_pc(client, which, it, B[k]) for k in top} if do_label else {}
-            out[f"{which}/{ref}"] = dict(evr=evr.tolist(), top=top, rater_pc_rho=R[top].to_dict(), feature_rho=F.to_dict(), labels=labels)
+            labels = {k: label_pc(client, which, it, B[k], f"{variant}/{ref}/{k}") for k in top} if do_label else {}
+            out[f"{variant}/{ref}"] = dict(evr=evr.tolist(), top=top, rater_pc_rho=R[top].to_dict(), feature_rho=F.to_dict(), labels=labels)
             fig, ax = plt.subplots(figsize=(8, 5))
             Rt = R.loc[rater_order(R.index)]
             im = ax.imshow(Rt.values, cmap=DIVERGING, vmin=-0.8, vmax=0.8, aspect="auto"); fig.colorbar(im, ax=ax, label="Spearman ρ(PC, rater score)")
             ax.set_xticks(range(N_PC), [f"{k}*" if k in top else k for k in R.columns], rotation=90); ax.set_yticks(range(len(Rt)), Rt.index); ax.grid(False)
-            ax.set_title(f"{which}: which of {ref}'s PCs does each rater reward? (* = labelled)")
-            save(fig, f"pc_rater_profile_{which}_{ref}")
-            plot_pareto(which, ref, B, top, labels, S[ref], grp)
-            print(which, ref, "top PCs", top, {k: labels.get(k) for k in top})
+            ax.set_title(f"{variant}: which of {ref}'s PCs does each rater reward? (* = labelled)")
+            save(fig, f"pc_rater_profile_{variant}_{ref}")
+            plot_pareto(variant, ref, B, top, labels, S[ref], grp)
+            print(variant, ref, "top PCs", top, {k: labels.get(k) for k in top})
     record("pcs", out)
     if do_label: print("labelling cost $", sum(l["cost"] for v in out.values() for l in v["labels"].values()))
 

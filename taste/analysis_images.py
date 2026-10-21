@@ -67,6 +67,16 @@ def main():
         if r in ph and ph.loc[acx.index, r].notna().all(): det[r] = float(((ph.loc[acx.index, r] > 0.5) == ~ai).mean())
         if (DATA / f"acx_recognition_{r}.parquet").exists(): det[r] = float(pd.read_parquet(DATA / f"acx_recognition_{r}.parquet").origin_correct.mean())
     record("acx_ai_preference", pref); record("acx_detection_accuracy", det)
+    # does the preference for human art survive on human works the rater could NOT name? (taste.acx_recognition)
+    rec_rows = []
+    for r in S.columns:
+        f = DATA / f"acx_recognition_{r}.parquet"
+        if not f.exists(): continue
+        rc = pd.read_parquet(f).reindex(acx.index)
+        g = np.where(ai, "AI image", np.where(rc.identified, "human, artist named", "human, not named"))
+        t = pd.DataFrame({"rater": rank(S.loc[acx.index, r]), "ACX crowd": rank(acx.human_score), "group": g})
+        for grp, d in t.groupby("group"): rec_rows.append(dict(rater=r, group=grp, n=len(d), rater_pct_rank=d.rater.mean(), crowd_pct_rank=d["ACX crowd"].mean()))
+    record("acx_recognition", rec_rows)
     fig, axs = plt.subplots(1, 2, figsize=(13, 5), gridspec_kw={"wspace": 0.95})
     for ax, dct, ttl, ref in [(axs[0], pref, "Preference for AI art:\nmean pct-rank(AI) − pct-rank(human)", 0),
                               (axs[1], det, "Telling AI from human art:\naccuracy of the human/AI call", 0.5)]:

@@ -72,7 +72,7 @@ def main():
     rows = []
     for r in S.columns:
         rows.append(dict(rater=r, family=fam(r), params_b=BY_NAME[r].params_b,
-                         rho_gen_size=stats.spearmanr(S.loc[known, r], logp).statistic,
+                         rho_gen_size=stats.spearmanr(S.loc[known, r], logp, nan_policy="omit").statistic,
                          rho_anchor=stats.spearmanr(S[r], S[ANCHOR], nan_policy="omit").statistic if r != ANCHOR else np.nan,
                          auc_journal_vs_twaiku=stats.mannwhitneyu(S.loc[gen == "human-journal", r], S.loc[gen == "human-twaiku", r]).statistic / ((gen == "human-journal").sum() * (gen == "human-twaiku").sum())))
     sc = pd.DataFrame(rows)
@@ -113,12 +113,25 @@ def main():
     lp = ratings("haiku", "logprob_mean"); nt = ratings("haiku", "n_item_tokens")
     Zr = Zm.copy()
     for r in lp.columns:
-        X = np.c_[np.ones(len(Zm)), lp.loc[Zm.index, r], np.log(nt.loc[Zm.index, r])]
-        Zr[r] = Zm[r] - X @ np.linalg.lstsq(X, Zm[r].values, rcond=None)[0]
-        stat.setdefault("rho_score_familiarity", {})[r] = stats.spearmanr(S.loc[Zm.index, r], lp.loc[Zm.index, r]).statistic
+        ok = Zm[r].notna() & lp.loc[Zm.index, r].notna()
+        X = np.c_[np.ones(ok.sum()), lp.loc[Zm.index[ok], r], np.log(nt.loc[Zm.index[ok], r])]
+        Zr.loc[ok, r] = Zm.loc[ok, r] - X @ np.linalg.lstsq(X, Zm.loc[ok, r].values, rcond=None)[0]
+        stat.setdefault("rho_score_familiarity", {})[r] = stats.spearmanr(S.loc[Zm.index, r], lp.loc[Zm.index, r], nan_policy="omit").statistic
     Ir = interaction(Zr, gm)[1][I.columns]
     stat["family_contrast_familiarity_controlled"] = family_contrast(Ir)
     stat["self_pref_familiarity_controlled"] = self_pref(Ir)
+    # assortative taste: does a rater's leftover preference track generator size, and does that depend on the rater's own size?
+    gsize = pd.Series({g: np.log10(BY_NAME[g].params_b) for g in I.columns if g in BY_NAME and not np.isnan(BY_NAME[g].params_b)})
+    assort = pd.DataFrame([dict(rater=r, family=fam(r), params_b=BY_NAME[r].params_b, rho_interaction_vs_gen_size=stats.spearmanr(I.loc[r, gsize.index], gsize).statistic) for r in I.index])
+    assort = assort[assort.params_b.notna()]
+    stat["assortative"] = assort.to_dict("records")
+    stat["assortative_rho_across_raters"] = stats.spearmanr(np.log10(assort.params_b), assort.rho_interaction_vs_gen_size).statistic
+    fig, ax = plt.subplots(figsize=(5.5, 4))
+    for f, d in assort.groupby("family"):
+        ax.plot(d.params_b, d.rho_interaction_vs_gen_size, marker=FAMILY_MARKER[f], color=FAMILY_COLOR[f], lw=2, ms=7, label=f)
+    ax.axhline(0, color="#8a8984", lw=1); ax.set_xscale("log"); ax.set_xlabel("rater parameters (B)"); ax.set_ylabel("ρ(leftover preference, log generator size)")
+    ax.set_title("Assortative taste: small judges prefer small writers"); ax.legend()
+    save(fig, "haiku_assortative")
     record("haiku_beholder", stat)
     for mat, nm, ttl in [(I, "haiku_beholder", "rater × generator interaction (z), main effects removed"),
                          (Ir, "haiku_beholder_familiarity_controlled", "same, after regressing out rater's log p(haiku) + length")]:
