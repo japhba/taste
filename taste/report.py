@@ -147,6 +147,14 @@ def build():
 </div>
 </section>
 
+<section id="model">
+<h2>A model of taste, measured</h2>
+<p>The talk's model: value = x·φ<sup>obvious</sup> + x·φ<sup>non-obvious</sup> + x·φ<sub>θ</sub><sup>subjective</sup> + ξ. For every judge that returns a 1–9 distribution, the variance of one sampled vote is split into what the novices (Qwen3.5-4B, Gemma-4-E4B) agree on, what the experts (27B and up, Claude) agree on beyond that, the judge's remaining persistent preference, and vote-to-vote noise. Consensuses always leave the judge out; a shuffled control gives 0 for every fitted part. The plane places each haiku by a ridge readout of the two consensuses from Qwen3.5-27B's and Gemma-4-31B's hidden states, held out by topic.</p>
+{fig("taste_model_plane", "Haiku in the (obvious, non-obvious) plane, coloured by a novice's and an expert's rating; circles: writer groups; right: each judge's direction (length = how well the two axes explain its ratings).")}
+{fig("taste_model_shares", "Share of a single vote's variance per judge. The random share also reflects how peaked a family's digit distributions are (Gemma's are much more peaked than Qwen's).")}
+{table(pd.DataFrame(R["taste_model"]["shares"]).set_index("judge").drop(columns=["family"]).rename(columns={"params_b": "params (B)"}))}
+</section>
+
 <section id="haiku">
 <h2>1 · Haiku: who do the judges think writes well?</h2>
 {fig("haiku_quality_ladder", "Mean rating (z-scored within each rater) per generator; ±95% CI over the 200 (120 human) haiku. Black: mean of all open and Qwen API raters; grey ×: the anchor judge.")}
