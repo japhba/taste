@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from scipy import stats
 from sklearn.metrics import roc_auc_score
 from taste.common import ratings, zscore, items, fam, rater_order, save, record, FAMILY_COLOR, FAMILY_MARKER
-from taste.paths import RAW, DATA
+from taste.paths import RAW, DATA, RATINGS
 from taste.models import BY_NAME
 from taste.analysis_haiku import icc_consistency
 
@@ -19,6 +19,20 @@ def human_icc_from_moments(mean, sd, n):
     """ICC(1) from per-image rating mean/sd/count (one-way random effects): shared share of a single human rating's variance."""
     n0 = n.mean(); msb = n0 * mean.var(ddof=1); msw = (sd ** 2).mean()
     return (msb - msw) / (msb + (n0 - 1) * msw)
+
+
+def icc_oneway(X):
+    """ICC(1) of an items x raters array (one-way random effects): the estimator we can use for people, who each rate different items."""
+    n, k = X.shape; msb = k * X.mean(1).var(ddof=1); msw = ((X - X.mean(1)[:, None]) ** 2).sum() / (n * (k - 1))
+    return (msb - msw) / (msb + (k - 1) * msw)
+
+
+def one_vote_icc(idx, raters, n_draws=20):
+    """Like-for-like with one human vote: each model casts a single digit sampled from its own p(1..9); ICC(1), mean over draws.
+    (The expected digit averages over the model's uncertainty, which a single human vote cannot.)"""
+    Pr = np.stack([pd.read_parquet(RATINGS / "images" / f"{r}.parquet").set_index("item_id").loc[idx, [f"p{k}" for k in range(1, 10)]].values for r in raters], 1)
+    cum = (Pr / Pr.sum(2, keepdims=True)).cumsum(2); rng = np.random.default_rng(0)
+    return float(np.mean([icc_oneway(((rng.random(Pr.shape[:2])[..., None] > cum).sum(2) + 1).astype(float)) for _ in range(n_draws)]))
 
 
 def main():
@@ -87,14 +101,18 @@ def main():
     save(fig, "acx_preference_detection")
 
     # ---- 3. shared taste: model panel ICC vs human ICC (single-rater reliability)
-    lap = pd.read_csv(RAW / "asmaerten__LAPIS/giaa/test.csv")
-    ava = pq.read_table(RAW / "trojblue__AVA-aesthetics-10pct-min50-10bins/data/test-00000-of-00002.parquet", columns=["rating_counts"]).to_pandas()
-    rc = np.stack(ava.rating_counts.values).astype(float); k = np.arange(1, 11)
-    n = rc.sum(1); mu = rc @ k / n; sd = np.sqrt(rc @ k ** 2 / n - mu ** 2)
-    icc = {"lapis": dict(humans=human_icc_from_moments(lap.mean_response, lap.std_response, lap["number of raters"]),
-                         models=icc_consistency(zscore(S.loc[it.dataset == "lapis", full]))),
-           "ava": dict(humans=human_icc_from_moments(pd.Series(mu), pd.Series(sd), pd.Series(n)),
-                       models=icc_consistency(zscore(S.loc[it.dataset == "ava", full])))}
+    lap = pd.read_csv(RAW / "asmaerten__LAPIS/giaa/test.csv").set_index("image_id")
+    ava = pq.read_table(RAW / "trojblue__AVA-aesthetics-10pct-min50-10bins/data/test-00000-of-00002.parquet", columns=["image_id", "rating_counts"]).to_pandas().set_index("image_id")
+    def ava_moments(a):
+        rc = np.stack(a.rating_counts.values).astype(float); k = np.arange(1, 11)
+        n = rc.sum(1); mu = rc @ k / n; return pd.Series(mu), pd.Series(np.sqrt(rc @ k ** 2 / n - mu ** 2)), pd.Series(n)
+    lap_moments = lambda l: (l.mean_response, l.std_response, l["number of raters"])
+    icc = {}
+    for ds in ["lapis", "ava"]:
+        idx = it.index[it.dataset == ds]; ids = idx.str.removeprefix(f"{ds}_")
+        whole, ours = (lap_moments(lap), lap_moments(lap.loc[ids.astype(int)])) if ds == "lapis" else (ava_moments(ava), ava_moments(ava.loc[ids]))
+        icc[ds] = dict(humans=human_icc_from_moments(*whole), humans_same_items=human_icc_from_moments(*ours),
+                       models=icc_consistency(zscore(S.loc[idx, full])), models_one_vote=one_vote_icc(idx, full))
     record("images_icc", icc); print(icc)
 
 

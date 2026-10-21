@@ -13,7 +13,7 @@ import pandas as pd
 from taste.common import ratings, items, fam, rater_order, generator_order, ANCHOR, RESULTS
 from taste.paths import DATA, PLOTS, REPORTS, ROOT
 from taste.report_katex import stylesheet, typeset
-from taste import report_examples
+from taste import report_examples, findings
 
 SERVED = Path.home() / "generative-learning/reports"
 NAME = "taste"
@@ -89,6 +89,8 @@ def build():
     craft = [(k, v) for k, v in pcs.items() if k.startswith("haiku-craft/")]
     craft_summary = "; ".join(f"{k.split('/')[1]}: “{v['labels'][v['top'][0]]['low']}” → “{v['labels'][v['top'][0]]['high']}” (label check {pct(v['labels'][v['top'][0]]['label_accuracy'])})" for k, v in craft)
     ex, ex_css = report_examples.build()
+    fs, fs_css = findings.build()
+    res = pd.DataFrame(json.loads(RESULTS.read_text())["finding_resolution"]).set_index(["step", "judge"]).auc
     built = datetime.now(ZoneInfo("Europe/London")).strftime("%d %B %Y, %H:%M %Z")
     n_haiku, n_gen = len(hi), hi.generator.nunique()
     cross = cm[(cm.pool == "last") & (cm.direction == "haiku → images")].pivot(index="rater", columns="test", values="rho")
@@ -101,17 +103,23 @@ def build():
 <h1>Do language models have taste?</h1>
 <p class="lede">Open Qwen3.5 and Gemma 4 models from 0.8B to 31B parameters, plus Qwen3.5-122B/397B and Claude Opus 5.5 through an API, rated {n_haiku:,} haiku from {n_gen - 4} models and four human tiers, and {len(ii):,} images with human ratings (AVA photos, LAPIS art, the ACX AI Art Turing Test). We read each rating from the model's next-token probabilities and kept its hidden states.</p>
 <div class="tiles">
-<div class="tile"><strong>{pct(icc_i['lapis']['humans'])} vs {pct(icc_i['lapis']['models'])}</strong><span>share of a single rating that is shared taste: one human vs one model (LAPIS art)</span></div>
+<div class="tile"><strong>{f2(res[findings.EDITORS, "qwen3.5-0.8b"])} → {f2(res[findings.EDITORS, ANCHOR])}</strong><span>chance that the judge prefers a journal haiku to a top-voted r/haiku one: Qwen3.5-0.8B → Claude Opus 5.5</span></div>
 <div class="tile"><strong>#{journal_rank} of {len(by_gen)}</strong><span>rank of published journal haiku under the open-model consensus (anchor judge: #{int((anchor_gen > anchor_gen['human-journal']).sum()) + 1})</span></div>
 <div class="tile"><strong>{f2(acx_claude)}</strong><span>{ANCHOR}'s preference for AI art on ACX (pct-rank AI − human; ACX crowd {f2(pref['humans (favourite share)'])})</span></div>
 </div>
 </header>
 
+<section id="findings">
+<h2>Five findings, one slide each</h2>
+<p class="small">Each card is sized 16:9 for a slide; PNGs of all cards are exported to <code>taste-files/slides/</code>.</p>
+{"".join(fs)}
+</section>
+
 <section id="summary">
 <h2>Summary</h2>
 <ol class="takeaways">
 <li><b>Judging taste scales, then saturates.</b> Agreement with the anchor judge on haiku rises from ρ = {f2(sc.loc[smallest].rho_anchor)} ({smallest}) to {f2(sc.loc[largest_local].rho_anchor)} ({largest_local}) and stays at {f2(sc.loc[largest_api].rho_anchor)} for {largest_api}. The smallest judge is worse than chance at telling journal haiku from tweets (AUC {f2(sc.loc[smallest].auc_journal_vs_twaiku)}).</li>
-<li><b>Models share taste far more than people do.</b> {pct(icc_i['lapis']['models'])} of a single model's rating of an artwork is shared with the model panel; for a single human it is {pct(icc_i['lapis']['humans'])} (AVA photos: {pct(icc_i['ava']['models'])} vs {pct(icc_i['ava']['humans'])}).</li>
+<li><b>Vote for vote, a model's taste is about as idiosyncratic as a person's.</b> Models' expected ratings agree closely (ICC {f2(icc_i['lapis']['models'])} on LAPIS art), but that averages over each model's own uncertainty. With one sampled vote per model, as for a single person, the shared share is {pct(icc_i['lapis']['models_one_vote'])} for models vs {pct(icc_i['lapis']['humans_same_items'])} for people on the same artworks (AVA photos: {pct(icc_i['ava']['models_one_vote'])} vs {pct(icc_i['ava']['humans_same_items'])}).</li>
 <li><b>The beholder effect is about capability, not family.</b> Raters do not favour their own family (contrast {beh['family_contrast']:+.3f} z). Instead small judges prefer small writers and large judges large ones: the link between a judge's size and its preference for bigger writers is ρ = {beh['assortative_rho_across_raters']:+.2f} across judges.</li>
 <li><b>Small models know more than they say.</b> On far-OOD haiku, a linear probe on {smallest}'s hidden states reaches ρ = {f2(pv.loc[smallest, 'haiku: probe'])} where its own rating gets {f2(pv.loc[smallest, 'haiku: verbal'])}; for {largest_local} the two meet ({f2(pv.loc[largest_local, 'haiku: probe'])} vs {f2(pv.loc[largest_local, 'haiku: verbal'])}).</li>
 <li><b>What the big judges reward, with topic held fixed:</b> {craft_summary}.</li>
@@ -160,8 +168,9 @@ def build():
 
 <section id="shared">
 <h2>3 · Shared or private taste?</h2>
-<p>ICC of a single rating: the share of its variance that other raters share. For people we use the spread of each image's ratings; for models, the panel of all raters that saw every item.</p>
-{table(pd.DataFrame({"one human": [icc_i['ava']['humans'], icc_i['lapis']['humans'], np.nan], "one model (panel)": [icc_i['ava']['models'], icc_i['lapis']['models'], icc_h['all']]}, index=pd.Index(["AVA photos", "LAPIS art", "haiku"], name="")))}
+<p>ICC of a single rating: the share of its variance that other raters share. For people we only have each image's spread of ratings from different people, so their ICC is one-way and each rating is one vote. A model's expected digit is an average over its own uncertainty, which inflates agreement; the like-for-like comparison samples one digit per model from its probabilities and uses the same one-way estimator on the same images.</p>
+{table(pd.DataFrame({"one person (same images)": [icc_i['ava']['humans_same_items'], icc_i['lapis']['humans_same_items'], np.nan], "one model, one sampled vote": [icc_i['ava']['models_one_vote'], icc_i['lapis']['models_one_vote'], np.nan], "one model, expected rating (consistency ICC)": [icc_i['ava']['models'], icc_i['lapis']['models'], icc_h['all']]}, index=pd.Index(["AVA photos", "LAPIS art", "haiku"], name="")))}
+<p>Like for like, the models' shared share is close to people's: models do not share taste much more than people do. What they do have is a stable expected rating, which a single person does not reveal.</p>
 {fig("haiku_rater_agreement", "Spearman ρ between raters across the haiku.", "70%")}
 </section>
 
@@ -211,7 +220,7 @@ def build():
 </section>
 <footer>Built {built} by <code>taste/report.py</code> from <code>{RESULTS}</code>. Literature survey: <a href="{NAME}-files/lit_survey.md">lit_survey.md</a>.</footer>
 """
-    css = (Path(__file__).parent / "report.css").read_text() + "\nfigure img{background:#fff;border-radius:8px;max-width:100%;display:block}\n" + ex_css
+    css = (Path(__file__).parent / "report.css").read_text() + "\nfigure img{background:#fff;border-radius:8px;max-width:100%;display:block}\n" + ex_css + fs_css
     page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate"><meta http-equiv="pragma" content="no-cache"><meta http-equiv="expires" content="0">
 <title>Taste in language models</title><style>{stylesheet()}</style><style>{css}</style></head><body><main>{typeset(body)}</main></body></html>"""
