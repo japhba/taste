@@ -49,7 +49,7 @@ def draw(ax, R, judges, n_tiers):
     ax.set_xlim(-0.5, n_tiers - 0.5); ax.set_ylim(0.25, 1.0); ax.set_ylabel("judge prefers the better one (AUC)")
 
 
-def haiku(ax):
+def haiku(ax, n_examples=1):
     it = items("haiku"); S = ratings("haiku").reindex(it.index)
     hum = it[it.generator.isin(TIERS)]
     ed = pd.read_parquet(RATINGS / "haiku_editor" / f"{DS}.parquet").set_index("item_id").score
@@ -59,8 +59,8 @@ def haiku(ax):
     for i, (g, name) in enumerate(TIERS.items()):
         short = hum.haiku.map(lambda h: max(len(l) for l in h.split("\n")) <= 24)
         cand = hum[(hum.generator == g) & ~hum.haiku.str.contains(PROFANITY, flags=re.I) & short & (hum.haiku.str.count("\n") == 2)]
-        ex = (P[cand.index] - P[hum.index[hum.generator == g]].mean()).abs().idxmin()
-        ax.annotate(hum.haiku[ex], (i, 1.02), xycoords=("data", "axes fraction"), ha="center", va="bottom",
+        ex = (P[cand.index] - P[hum.index[hum.generator == g]].mean()).abs().nsmallest(n_examples).index  # the most typical of the tier
+        ax.annotate("\n\n".join(hum.haiku[ex]), (i, 1.02), xycoords=("data", "axes fraction"), ha="center", va="bottom",
                     bbox=dict(boxstyle="round,pad=0.5", fc="#f7f6f3", ec="#d6d4cf"), annotation_clip=False)
     ax.set_xticks(np.arange(len(TIERS)), list(TIERS.values()))
     ax.set_xlabel("human taste: haiku from the bottom to the top of the ladder (each point: the two rungs on either side)")
@@ -111,25 +111,20 @@ CLAUDE_GUESS = 2000  # Claude's size is not public; ~2T is the figure people flo
 
 
 def plot_by_size(D):
-    """One line through every judge sorted by size (Claude at a guessed ~2T); markers keep the family; the editor persona off the line."""
-    fig, ax = plt.subplots(figsize=(5.2, 4.6), layout="constrained")
+    """One line through every judge sorted by size (Claude at a guessed ~2T); the editor persona off the line; labels instead of a legend."""
+    fig, ax = plt.subplots(figsize=(4.2, 5.4), layout="constrained")
     ax.axhline(0.5, color="#8a8984", lw=1)
     D = D.copy(); D.loc[ANCHOR, "size"] = CLAUDE_GUESS
     line = D.drop(index="editor").sort_values("size")
-    ax.plot(line["size"], line.auc, color="#3d3d3a", lw=2, zorder=2)
-    style = {**{j: ("o", "#1c5cab", "Qwen3.5") for j in QWEN}, **{j: ("o", FAMILY_COLOR["gemma"], "Gemma 4") for j in GEMMA},
-             DS: ("D", DS_COLOR, "DeepSeek-V4.1 (763B)"), ANCHOR: ("*", CLAUDE_COLOR, "Claude Opus 5.5 (size guessed, ~2T)")}
-    seen = set()
-    for j, r in line.iterrows():
-        m, c, lab = style[j]
-        ax.errorbar([r["size"]], [r.auc], yerr=[[r.auc - r.lo], [r.hi - r.auc]], color=c, marker=m, ms=12 if m == "*" else 7, mec="white", mew=1, capsize=2, ls="none", zorder=3,
-                    label=None if lab in seen else lab); seen.add(lab)
+    ax.errorbar(line["size"], line.auc, yerr=[line.auc - line.lo, line.hi - line.auc], color="#1c5cab", lw=2, marker="o", ms=6, mec="white", mew=1, capsize=2)
     r = D.loc["editor"]
-    ax.errorbar([D.loc[DS, "size"]], [r.auc], yerr=[[r.auc - r.lo], [r.hi - r.auc]], color=DS_COLOR, marker="D", ms=7, mfc="white", mew=1.6, capsize=2, ls="none", zorder=3,
-                label="DeepSeek-V4.1, told it is a journal editor")
-    ax.set_xscale("log"); ax.set_xticks([1, 10, 100, 1000], ["1B", "10B", "100B", "1T"]); ax.minorticks_off()
+    ax.errorbar([D.loc[DS, "size"]], [r.auc], yerr=[[r.auc - r.lo], [r.hi - r.auc]], color="#1c5cab", marker="o", ms=6, mfc="white", mew=1.6, capsize=2, ls="none")
+    for j, text, off, ha, va in [(DS, "DeepSeek-V4.1", (0, -24), "center", "top"), (ANCHOR, "Claude\n(~2T, guessed)", (9, 0), "left", "center"),
+                                 ("editor", "DeepSeek as\njournal editor", (-9, 0), "right", "center")]:
+        x = D.loc[DS, "size"] if j == "editor" else D.loc[j, "size"]
+        ax.annotate(text, (x, D.loc[j, "auc"]), xytext=off, textcoords="offset points", ha=ha, va=va, color="#52514e")
+    ax.set_xscale("log"); ax.set_xticks([1, 10, 100, 1000], ["1B", "10B", "100B", "1T"]); ax.minorticks_off(); ax.set_xlim(0.5, 40000)
     ax.set_xlabel("judge size (parameters)"); ax.set_ylabel("prefers the better haiku, mean over the ladder (AUC)")
-    ax.legend(frameon=False, loc="lower right")
     save(fig, "discrim_by_size")
 
 
@@ -143,8 +138,8 @@ def main():
     pd.set_option("display.width", 200)
     for name, R in [("haiku", Rh), ("photos", Rp)]: print(name); print(R.pivot(index="judge", columns="step", values="auc").round(2).to_string())
     save(fig, "discrim_curves")
-    fig, ax = plt.subplots(figsize=(10, 6.4), layout="constrained")  # haiku alone, for a slide
-    haiku(ax); fig.legend(*ax.get_legend_handles_labels(), loc="outside lower center", ncol=3, frameon=False)
+    fig, ax = plt.subplots(figsize=(8.8, 7.4), layout="constrained")  # haiku alone, for a slide, three examples per tier
+    haiku(ax, n_examples=3); fig.legend(*ax.get_legend_handles_labels(), loc="outside lower center", ncol=4, frameon=False)
     save(fig, "discrim_haiku")
     D = by_size(); record("discrim_by_size", D.reset_index(names="judge").to_dict("records")); print(D.round(3).to_string()); plot_by_size(D)
 
