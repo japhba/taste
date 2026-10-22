@@ -12,6 +12,7 @@ from taste.common import ratings, items, fam, save, record, ANCHOR, FAMILY_COLOR
 from taste.models import BY_NAME
 from taste.probes import probe, hidden, LAYER_FRAC
 from taste.report_examples import pct, chip, haiku_card, img_card
+from taste.taste_features import TIERS
 
 RNG = np.random.default_rng(0)
 INK, INK2, MUTED = "#0b0b0b", "#52514e", "#8a8984"
@@ -221,9 +222,11 @@ def steering(it, S, P):
     R = pd.DataFrame(json.loads(RESULTS.read_text())["steering"]["haiku_craft"]["curves"])
     E = pd.DataFrame(json.loads(RESULTS.read_text())["steering"]["haiku_craft"]["effects"])
     lab = json.loads(RESULTS.read_text())["taste_features_craft"]["labels"]["PC2"]
-    order = ["qwen3.5-0.8b", "qwen3.5-2b", "gemma-4-e2b", "qwen3.5-4b", "qwen3.5-27b", "gemma-4-31b"]
-    color = {"qwen3.5-0.8b": "#c0302f", "qwen3.5-2b": "#e06a5f", "gemma-4-e2b": "#eb9a8f", "qwen3.5-4b": "#c9c7c0", "qwen3.5-27b": "#1b8f65", "gemma-4-31b": "#0f5c40"}
-    name = {"qwen3.5-0.8b": "Qwen3.5-0.8B", "qwen3.5-2b": "Qwen3.5-2B", "gemma-4-e2b": "Gemma-4-E2B", "qwen3.5-4b": "Qwen3.5-4B", "qwen3.5-27b": "Qwen3.5-27B", "gemma-4-31b": "Gemma-4-31B"}.get
+    shades = {"tiny": ["#c0302f", "#e06a5f", "#eb9a8f"], "small": ["#8a8984", "#b9b7b0", "#d6d4cf"], "large": ["#1b8f65", "#0f5c40", "#5fbf97"]}
+    order = [j for t in TIERS.values() for j in t if j in set(R.judge)]
+    color = {j: shades[t][i] for t, js in TIERS.items() for i, j in enumerate([j for j in js if j in set(R.judge)])}
+    name = lambda j: {"qwen3.5-0.8b": "Qwen3.5-0.8B", "qwen3.5-2b": "Qwen3.5-2B", "gemma-4-e2b": "Gemma-4-E2B", "qwen3.5-4b": "Qwen3.5-4B", "qwen3.5-9b": "Qwen3.5-9B",
+                      "gemma-4-e4b": "Gemma-4-E4B", "qwen3.5-27b": "Qwen3.5-27B", "gemma-4-26b-a4b": "Gemma-4-26B", "gemma-4-31b": "Gemma-4-31B"}[j]
     fig, ax = plt.subplots(figsize=(5.0, 3.6), layout="constrained")
     ax.axhline(0, color=MUTED, lw=1); ax.axvline(0, color=MUTED, lw=1)
     for j in order:
@@ -236,7 +239,7 @@ def steering(it, S, P):
     record("finding_steering", e.reset_index().to_dict("records"))
     B = pd.read_parquet(DATA / "steer/haiku_features_craft.parquet")
     chips = lambda i: [chip("Qwen 0.8B", P.loc[i, "qwen3.5-0.8b"]), chip("Qwen 27B", P.loc[i, "qwen3.5-27b"]), chip("Claude", P.loc[i, ANCHOR])]
-    model = B.index[~it.loc[B.index, "generator"].str.startswith("smollm")]
+    model = B.index[~it.loc[B.index, "generator"].str.startswith(("smollm", "claude"))]  # no broken text; no Claude-written haiku next to Claude's rating
     lo = (P.loc[model, "qwen3.5-0.8b"] - P.loc[model, "qwen3.5-27b"]).where(B.loc[model, "PC2"] <= B.loc[model, "PC2"].quantile(0.05)).idxmax()  # cliché end, small judge's favourite
     hi = (P.loc[model, "qwen3.5-27b"] - P.loc[model, "qwen3.5-0.8b"]).where(B.loc[model, "PC2"] >= B.loc[model, "PC2"].quantile(0.95)).idxmax()  # concrete end, large judge's favourite
     ex = pair_html("cliché end vs concrete end of the feature", haiku_card(it.haiku[lo], it.generator[lo], chips(lo)), haiku_card(it.haiku[hi], it.generator[hi], chips(hi)))

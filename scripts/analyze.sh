@@ -14,4 +14,5 @@ python -m taste.lapis_taste            # people: one vote split into obvious / g
 python -m taste.taste_features         # unsupervised features, judges' weights, steering directions
 python -m taste.taste_features --craft
 python -m taste.steer_report           # steering results (the GPU runs: taste.steer, taste.steer_features)
+python -m taste.taste_terms            # one panel per term of the model of taste
 python -m taste.report

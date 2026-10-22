@@ -20,7 +20,8 @@ from scipy import stats
 from taste.common import ratings, items, hidden, save, record, fam, DIVERGING, HIDDEN
 from taste.models import BY_NAME
 from taste.paths import DATA
-from taste.pcs import basis, label_pc
+from sklearn.decomposition import PCA
+from taste.pcs import basis, label_pc, N_PC
 from taste.probes import LAYER_FRAC
 from taste.gen_haiku import openrouter
 from taste.taste_space import group_of
@@ -39,6 +40,19 @@ def classify(w):
     if np.sign(t["tiny"]) != np.sign(t["large"]) and abs(t["tiny"]) >= 0.1: return "high/low-brow"
     if abs(t["tiny"]) < 0.4 * abs(t["large"]): return "non-obvious"
     return "obvious"
+
+
+def humans_on_craft(it, keep, demean):
+    """Human haiku (no topic) placed on the topic-removed PCs: the same PCA as taste.pcs.basis, fit on topic-centred model haiku, applied to
+    human haiku centred on the model haiku's mean."""
+    ids, layers, H = hidden("haiku", REF, "mean")
+    li = int(np.argmin(np.abs(layers - LAYER_FRAC * layers.max()))); X = H[:, li].astype(np.float32)
+    m = keep.reindex(ids).to_numpy(bool); Xm = X[m]
+    Xc = Xm - pd.DataFrame(Xm).groupby(demean.reindex(ids[m]).to_numpy()).transform("mean").to_numpy()
+    mu, sd = Xc.mean(0), Xc.std(0) + 1e-6
+    pca = PCA(N_PC, random_state=0).fit((Xc - mu) / sd)
+    hum = it.index[it.generator.str.startswith("human")].intersection(ids); pos = pd.Series(np.arange(len(ids)), index=ids)[hum].values
+    return pd.DataFrame(pca.transform((X[pos] - Xm.mean(0) - mu) / sd), index=hum, columns=[f"PC{k + 1}" for k in range(N_PC)])
 
 
 def directions(it, B, pcs):
@@ -61,9 +75,15 @@ def main(craft):
     if craft:
         keep = it.topic.notna(); it, S, g = it[keep], S[keep], g[keep]; demean = it.topic; S = S - S.groupby(it.topic).transform("mean")
     B, evr = basis("haiku", REF, keep, demean); B = B.reindex(it.index)
+    Hu = humans_on_craft(items("haiku"), keep, demean) if craft else None
     W = pd.DataFrame({r: [stats.spearmanr(B[k], S[r], nan_policy="omit").statistic for k in B] for r in S.columns}, index=B.columns).T
-    for k in B: B[k] *= np.sign(W.loc[REF, k]); W[k] *= np.sign(W.loc[REF, k])  # +PC = what the reference judge rates higher (as in taste.pcs)
+    for k in B:  # +PC = what the reference judge rates higher (as in taste.pcs)
+        sg = np.sign(W.loc[REF, k]); B[k] *= sg; W[k] *= sg
+        if craft: Hu[k] *= sg
     T = pd.DataFrame({name: [stats.spearmanr(B.loc[g.isin([lo, hi]), k], (g[g.isin([lo, hi])] == hi)).statistic for k in B] for name, (lo, hi) in TRUTH.items() if g.isin([lo, hi]).any()}, index=B.columns).T
+    if craft:  # people's ladder on the topic-removed features: top-voted r/haiku posts < journal haiku
+        gen = items("haiku").generator.reindex(Hu.index); sel = gen.isin(["human-reddit-top", "human-journal"])
+        T.loc["r/haiku top < journal (projected)"] = [stats.spearmanr(Hu.loc[sel, k], gen[sel] == "human-journal").statistic for k in B]
     cls = pd.Series({k: classify(W[k]) for k in B})
     tier = pd.DataFrame({t: W.loc[v].mean() for t, v in TIERS.items()})
     summary = tier.join(cls.rename("class")).join(T.T).join(pd.Series(evr, index=B.columns, name="var_explained"))
