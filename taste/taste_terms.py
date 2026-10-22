@@ -92,7 +92,59 @@ def kitsch():
     save(fig, "kitsch_by_size")
 
 
+def pooled(n_boot=300):
+    """The three expertise terms on one scale for the main deck: how often a judge rates a haiku from one end above one from the other
+    (AUC, 95% bootstrap interval), every judge pooled into one line against size (Claude at a guessed ~2T). Shared: top vs bottom fifth of
+    the all-haiku PC1. Expert: frontier vs open models' haiku. Brow: top vs bottom fifth of the topic-removed kitsch feature (craft PC2),
+    ratings with topic means removed. Above and below each panel the two ends, each by one haiku: for the features, a clear one from that
+    end's fifth (the brow pair as on the high-brow slide); for the writers, an open and a frontier haiku on one topic, each closest to its
+    group's mean percentile over all judges."""
+    import re
+    from taste.common import ratings, items, record
+    from taste.paths import DATA
+    from taste.findings import auc, boot_auc, PROFANITY
+    from taste.taste_space import group_of
+    from taste.discrim_curves import QWEN, GEMMA, CLAUDE_GUESS
+    it = items("haiku"); S = ratings("haiku").reindex(it.index); J = QWEN + GEMMA + [DS, ANCHOR]
+    short = it.haiku.map(lambda h: h.count("\n") == 2 and max(map(len, h.split("\n"))) <= 24) & ~it.haiku.str.contains(PROFANITY, flags=re.I)
+    def ends(f, sc, starts):
+        lo, hi = f.index[f <= f.quantile(0.2)], f.index[f >= f.quantile(0.8)]
+        return lo, hi, sc, [next(i for i in ix if it.haiku[i].startswith(st)) for ix, st in zip((lo, hi), starts)]  # fails if not in that fifth
+    B = pd.read_parquet(DATA / "steer/haiku_features.parquet").PC1; Bc = pd.read_parquet(DATA / "steer/haiku_features_craft.parquet").PC2
+    Sd = S.loc[Bc.index] - S.loc[Bc.index].groupby(it.topic[Bc.index]).transform("mean")
+    g = group_of(it); P = S.rank(pct=True).mean(axis=1); op, fr = it.index[(g == "open") & short], it.index[(g == "frontier") & short]
+    pairs = [(t, (P[op[it.topic[op] == t]] - P[g == "open"].mean()).abs(), (P[fr[it.topic[fr] == t]] - P[g == "frontier"].mean()).abs()) for t in it.topic[op].unique()]
+    t, a, b = min((p for p in pairs if len(p[1]) and len(p[2])), key=lambda p: p[1].min() + p[2].min())
+    TERMS = {"needs no expertise": ends(B, S, ["Engulfed by darkness", "Pale mist veils the lake"]),
+             "needs expertise": (it.index[g == "open"], it.index[g == "frontier"], S, [a.idxmin(), b.idxmin()]),
+             "high-brow vs low-brow": ends(Bc, Sd, ["Bright sounds fill the air\nJoyful echoes", "Empty chair still warm"])}
+    rows = []
+    for name, (lo, hi, sc, ex) in TERMS.items():
+        for j in J:
+            w, bb = sc.loc[lo, j].dropna().values, sc.loc[hi, j].dropna().values
+            rows.append(dict(term=name, judge=j, size=CLAUDE_GUESS if j == ANCHOR else BY_NAME[j].params_b, auc=auc(w, bb), ci=list(boot_auc(w, bb, n_boot))))
+    D = pd.DataFrame(rows); X = {name: dict(bottom=it.haiku[ex[0]], top=it.haiku[ex[1]]) for name, (_, _, _, ex) in TERMS.items()}
+    record("taste_terms_pooled", dict(auc=D.to_dict("records"), examples=X, expert_topic=t))
+    print(D.pivot(index="judge", columns="term", values="auc").round(2).to_string()); print(X)
+
+    fig, axs = plt.subplots(1, 3, figsize=(9.6, 6.4), sharey=True)
+    fig.subplots_adjust(left=0.08, right=0.99, top=0.70, bottom=0.27, wspace=0.12)
+    box = dict(boxstyle="round,pad=0.5", fc="#f7f6f3", ec="#d6d4cf")
+    for ax, (name, d) in zip(axs, D.groupby("term", sort=False)):
+        d = d.sort_values("size"); ci = np.array(d.ci.tolist())
+        ax.axhspan(0.2, 0.5, color="#f0efec", lw=0, zorder=0); ax.axhline(0.5, color="#8a8984", lw=1)
+        ax.errorbar(d["size"], d.auc, yerr=[d.auc - ci[:, 0], ci[:, 1] - d.auc], color="black", lw=2, marker="o", ms=6, mec="white", mew=1, capsize=2)
+        ax.set_xscale("log"); ax.set_xticks([1, 10, 100, 1000], ["1B", "10B", "100B", "1T"]); ax.minorticks_off(); ax.set_xlim(0.5, 4000); ax.set_ylim(0.2, 1.0)
+        ax.set_xlabel("judge size (parameters)")
+        ax.annotate(X[name]["top"], (0.5, 1.04), xycoords="axes fraction", ha="center", va="bottom", bbox=box, annotation_clip=False)
+        ax.annotate(X[name]["bottom"], (0.5, -0.2), xycoords="axes fraction", ha="center", va="top", bbox=box, annotation_clip=False)
+        ax.annotate(name, (0.5, 1.33), xycoords="axes fraction", ha="center", va="bottom", fontweight="bold", annotation_clip=False)
+    axs[0].set_ylabel("prefers the top haiku over the bottom one (AUC)")
+    save(fig, "taste_terms_pooled")
+
+
 if __name__ == "__main__":
     import sys
     if "--kitsch" in sys.argv: kitsch()
-    else: main(); kitsch()
+    elif "--pooled" in sys.argv: pooled()
+    else: main(); kitsch(); pooled()
