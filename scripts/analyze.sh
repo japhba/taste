@@ -17,4 +17,5 @@ python -m taste.steer_report           # steering results (the GPU runs: taste.s
 python -m taste.taste_terms            # one panel per term of the model of taste
 python -m taste.ds_latent              # DeepSeek-V4.1's own PCs, probes by depth
 python -m taste.ds_persona             # DeepSeek-V4.1 under personas (taste.ds_rate --persona)
+python -m taste.discrim_curves         # discriminability along human taste, by judge size, with examples
 python -m taste.report

@@ -126,9 +126,11 @@ def plot_planes(it, g, fold, Zc):
     writer (ground truth)."""
     show = g.isin(["weak", "open", "frontier"]).values
     sub = np.flatnonzero(show); sub = RNG.choice(sub, min(1200, len(sub)), replace=False)
-    fig, axs = plt.subplots(1, 3, figsize=(10.5, 3.9), layout="constrained")
-    for ax, (r, which, ttl) in zip(axs, [("qwen3.5-27b", 0, "raw stimulus x (token embeddings)"), ("qwen3.5-0.8b", 2 / 3, "novice: Qwen3.5-0.8B"),
-                                         ("qwen3.5-27b", 2 / 3, "expert: Qwen3.5-27B")]):
+    panels = [("qwen3.5-27b", 0, "raw stimulus x (token embeddings)"), ("qwen3.5-0.8b", 2 / 3, "novice: Qwen3.5-0.8B"), ("qwen3.5-27b", 2 / 3, "expert: Qwen3.5-27B"),
+            ("deepseek-v4.1-flash-1017", 2 / 3, "largest: DeepSeek-V4.1 (763B)")]
+    panels = [x for x in panels if (HIDDEN / "haiku" / f"{x[0]}.npz").exists()]
+    fig, axs = plt.subplots(1, len(panels), figsize=(3.5 * len(panels), 3.9), layout="constrained")
+    for ax, (r, which, ttl) in zip(axs, panels):
         ids, layers, H = hidden("haiku", r, "mean")
         li = int(np.argmin(np.abs(layers - which * layers.max())))
         X = H[pd.Series(np.arange(len(ids)), index=ids).reindex(it.index).values, li].astype(np.float32)
@@ -149,4 +151,7 @@ def plot_planes(it, g, fold, Zc):
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--planes" in sys.argv:
+        it = items("haiku"); S = ratings("haiku").reindex(it.index); plot_planes(it, group_of(it), folds(it), (S - S.mean()) / S.std())
+    else: main()

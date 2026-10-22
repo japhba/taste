@@ -105,8 +105,10 @@ def plot_curves(D):
 
 def plot_planes(it, S, reps):
     """Pixels, a novice and an expert representation, each on its own held-out obvious / expert axes, coloured by the human score."""
-    show = [("pixels", 0, "pixels (raw stimulus)"), ("qwen3.5-0.8b", 2 / 3, "novice: Qwen3.5-0.8B"), ("qwen3.5-27b", 2 / 3, "expert: Qwen3.5-27B")]
-    fig, axs = plt.subplots(len(SETS), len(show), figsize=(11, 8.4), layout="constrained")
+    show = [("pixels", 0, "pixels (raw stimulus)"), ("qwen3.5-0.8b", 2 / 3, "novice: Qwen3.5-0.8B"), ("qwen3.5-27b", 2 / 3, "expert: Qwen3.5-27B"),
+            ("deepseek-v4.1-flash-1017", 2 / 3, "largest: DeepSeek-V4.1 (763B)")]
+    show = [x for x in show if x[0] in reps]
+    fig, axs = plt.subplots(len(SETS), len(show), figsize=(3.6 * len(show) + 0.8, 8.4), layout="constrained")
     for row, ds in zip(axs, SETS):
         m = (it.dataset == ds).values; gt = it.human_score.values[m]; fold = RNG.integers(0, 5, m.sum()); Zc = zscore(S[m])
         pct = pd.Series(gt).rank(pct=True).values; order = np.argsort(np.abs(pct - 0.5))  # extremes drawn last
@@ -130,5 +132,5 @@ if __name__ == "__main__":
     from taste.common import RESULTS
     if "--plot" in sys.argv: plot_curves(pd.DataFrame(json.load(open(RESULTS))["taste_space_images"]))
     elif "--planes" in sys.argv:
-        it = items("images"); plot_planes(it, ratings("images").reindex(it.index), representations(it, only=["qwen3.5-0.8b", "qwen3.5-27b"]))
+        it = items("images"); plot_planes(it, ratings("images").reindex(it.index), representations(it, only=["qwen3.5-0.8b", "qwen3.5-27b", "deepseek-v4.1-flash-1017"]))
     else: main()
