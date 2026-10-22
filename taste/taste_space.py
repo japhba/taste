@@ -61,7 +61,7 @@ def readout(X, y, fold):
     for k in np.unique(fold):
         tr, te = (fold != k) & has, fold == k
         mu, sd = X[tr].mean(0), X[tr].std(0) + 1e-6
-        pca = PCA(64, random_state=0).fit((X[tr] - mu) / sd)
+        pca = PCA(min(64, X.shape[1]), random_state=0).fit((X[tr] - mu) / sd)
         out[te] = RidgeCV(alphas=np.logspace(-1, 5, 13)).fit(pca.transform((X[tr] - mu) / sd), y[tr]).predict(pca.transform((X[te] - mu) / sd))
     return out
 
@@ -139,11 +139,12 @@ def plot_planes(it, g, fold, Zc):
         for grp in ["open", "weak", "frontier"]:
             m = sub[g.values[sub] == grp]
             ax.scatter(a[m], b[m], s=8, c=GROUP_COLOR[grp], linewidths=0, alpha=0.85, label={"weak": "weak writers", "open": "competent open models", "frontier": "frontier models"}[grp])
-        ax.set_title(f"{ttl}\nweak|open AUC {sep[list(CONTRASTS)[0]]:.2f} · open|frontier AUC {sep[list(CONTRASTS)[1]]:.2f}", loc="left")
+        ax.set_title(f"{ttl}\nAUC weak|open {sep[list(CONTRASTS)[0]]:.2f}\nAUC open|frontier {sep[list(CONTRASTS)[1]]:.2f}", loc="left")
         ax.axhline(0, color="#8a8984", lw=0.8); ax.axvline(0, color="#8a8984", lw=0.8)
         ax.set_xlabel("obvious axis"); ax.set_ylabel("expert axis"); ax.set_xticks([]); ax.set_yticks([]); ax.set_box_aspect(1)
         lim = np.percentile(np.abs(np.r_[a[sub], b[sub]]), 99) * 1.1; ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim)
-    fig.legend(*axs[0].get_legend_handles_labels(), loc="outside lower center", ncol=3, frameon=False, markerscale=2)
+    h, l = axs[0].get_legend_handles_labels(); h = [h[1], h[0], h[2]]; l = [l[1], l[0], l[2]]  # weak, open, frontier
+    fig.legend(h, l, loc="outside lower center", ncol=3, frameon=False, markerscale=2)
     save(fig, "taste_space_planes")
 
 

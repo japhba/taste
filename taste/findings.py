@@ -216,6 +216,38 @@ def craft_axis(it, S, P):
     return slide(2, "Haiku · inside the models", "Two model families learned the same taste axis: concrete images over clichés", sub, png_uri(p), ex, foot)
 
 
+def steering(it, S, P):
+    """Finding 2, causal half: steering each judge along its own direction for the concrete-vs-cliche feature (taste.steer_features --craft)."""
+    R = pd.DataFrame(json.loads(RESULTS.read_text())["steering"]["haiku_craft"]["curves"])
+    E = pd.DataFrame(json.loads(RESULTS.read_text())["steering"]["haiku_craft"]["effects"])
+    lab = json.loads(RESULTS.read_text())["taste_features_craft"]["labels"]["PC2"]
+    order = ["qwen3.5-0.8b", "qwen3.5-2b", "gemma-4-e2b", "qwen3.5-4b", "qwen3.5-27b", "gemma-4-31b"]
+    color = {"qwen3.5-0.8b": "#c0302f", "qwen3.5-2b": "#e06a5f", "gemma-4-e2b": "#eb9a8f", "qwen3.5-4b": "#c9c7c0", "qwen3.5-27b": "#1b8f65", "gemma-4-31b": "#0f5c40"}
+    name = {"qwen3.5-0.8b": "Qwen3.5-0.8B", "qwen3.5-2b": "Qwen3.5-2B", "gemma-4-e2b": "Gemma-4-E2B", "qwen3.5-4b": "Qwen3.5-4B", "qwen3.5-27b": "Qwen3.5-27B", "gemma-4-31b": "Gemma-4-31B"}.get
+    fig, ax = plt.subplots(figsize=(5.0, 3.6), layout="constrained")
+    ax.axhline(0, color=MUTED, lw=1); ax.axvline(0, color=MUTED, lw=1)
+    for j in order:
+        g = R[(R.judge == j) & (R.feature == "PC2")].sort_values("alpha")
+        ax.plot(g.alpha, g.delta, color=color[j], lw=2, marker="o", ms=5, mec="white", mew=1, label=name(j))
+    ax.set_xlabel("push toward concrete images (+) or clichés (−)"); ax.set_ylabel("change in the judge's rating (1–9)")
+    fig.legend(loc="outside lower center", ncol=3, frameon=False)
+    p = save(fig, "finding_steering")
+    e = E[E.feature == "PC2"].set_index("judge")
+    record("finding_steering", e.reset_index().to_dict("records"))
+    B = pd.read_parquet(DATA / "steer/haiku_features_craft.parquet")
+    chips = lambda i: [chip("Qwen 0.8B", P.loc[i, "qwen3.5-0.8b"]), chip("Qwen 27B", P.loc[i, "qwen3.5-27b"]), chip("Claude", P.loc[i, ANCHOR])]
+    model = B.index[~it.loc[B.index, "generator"].str.startswith("smollm")]
+    lo = (P.loc[model, "qwen3.5-0.8b"] - P.loc[model, "qwen3.5-27b"]).where(B.loc[model, "PC2"] <= B.loc[model, "PC2"].quantile(0.05)).idxmax()  # cliché end, small judge's favourite
+    hi = (P.loc[model, "qwen3.5-27b"] - P.loc[model, "qwen3.5-0.8b"]).where(B.loc[model, "PC2"] >= B.loc[model, "PC2"].quantile(0.95)).idxmax()  # concrete end, large judge's favourite
+    ex = pair_html("cliché end vs concrete end of the feature", haiku_card(it.haiku[lo], it.generator[lo], chips(lo)), haiku_card(it.haiku[hi], it.generator[hi], chips(hi)))
+    sub = (f"Inside each judge, push a haiku's representation from clichés toward concrete images and read its rating: Qwen3.5-0.8B likes it less "
+           f"({e.loc['qwen3.5-0.8b', 'effect']:+.2f} per unit), Qwen3.5-27B ({e.loc['qwen3.5-27b', 'effect']:+.2f}) and Gemma-4-31B ({e.loc['gemma-4-31b', 'effect']:+.2f}) like it more. "
+           "The weight is causal, and its sign flips with size.")
+    foot = (f"Feature: PC2 of Qwen3.5-27B's representation of model haiku, topic means removed (unsupervised; named by Claude, {lab['label_accuracy']:.0%} on held-out pairs). "
+            "Each judge's own direction (top minus bottom fifth, ⅓ depth) added at the haiku's tokens; α = ±1, ±2, ±4; 150 haiku; effect = the part that flips sign with α.")
+    return slide(2, "Haiku · steering", "Push a haiku toward concrete images inside the model: small judges like it less, large ones more", sub, png_uri(p), ex, foot)
+
+
 # ---------------------------------------------------------------- 3. small models know more than they say
 def know_more(it, S, P):
     pr = pd.DataFrame(json.loads(RESULTS.read_text())["probes"])
@@ -379,7 +411,7 @@ CSS = """
 def build():
     it = items("haiku"); S = ratings("haiku").reindex(it.index); P = pct(S)
     ii = items("images"); Si = ratings("images").reindex(ii.index)
-    return [*resolution(it, S, P), craft_axis(it, S, P), know_more(it, S, P), loyalty(it, S, P), acx(Si, ii)], CSS
+    return [*resolution(it, S, P), craft_axis(it, S, P), steering(it, S, P), know_more(it, S, P), loyalty(it, S, P), acx(Si, ii)], CSS
 
 
 if __name__ == "__main__":

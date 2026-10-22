@@ -32,8 +32,9 @@ class Rater:
         self.proc = AutoProcessor.from_pretrained(hf, use_fast=False)  # PIL backend: torchvision was 10-25x slower per image here
         self.tok = self.proc.tokenizer
         self.tok.padding_side = "left"
-        # 35B-A3B is ~70 GB in bf16: let accelerate spill what does not fit onto the CPU
-        self.model = AutoModelForImageTextToText.from_pretrained(hf, dtype=torch.bfloat16, device_map="auto", max_memory={0: "72GiB", "cpu": "400GiB"}).eval()
+        # spread over the visible GPUs (6 GiB headroom each for activations); 35B-A3B is ~70 GB in bf16 and spills onto the CPU on one H100
+        gpus = {i: f"{torch.cuda.get_device_properties(i).total_memory // 2**30 - 6}GiB" for i in range(torch.cuda.device_count())}
+        self.model = AutoModelForImageTextToText.from_pretrained(hf, dtype=torch.bfloat16, device_map="auto", max_memory={**gpus, "cpu": "400GiB"}).eval()
         self.batch = 1  # one item per forward: even unpadded equal-length batches shifted scores by up to 0.09 (batch-shape-dependent numerics)
         self.digits = [self.first_id(str(d), single=True) for d in range(1, 10)]
         self.origin = [self.first_id(w) for w in ("Human", "AI")]

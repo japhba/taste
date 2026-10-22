@@ -13,7 +13,7 @@ import pandas as pd
 from taste.common import ratings, items, fam, rater_order, generator_order, ANCHOR, RESULTS
 from taste.paths import DATA, PLOTS, REPORTS, ROOT
 from taste.report_katex import stylesheet, typeset
-from taste import report_examples, findings, intro
+from taste import report_examples, findings, intro, lapis_taste
 
 SERVED = Path.home() / "generative-learning/reports"
 NAME = "taste"
@@ -34,6 +34,67 @@ def table(df, num_fmt="{:.2f}", index=True):
                         else f'<td class="num">–</td>' if isinstance(v, (float, np.floating)) else f"<td>{html.escape(str(v))}</td>" for v in r.values)
         rows.append(f"<tr>{f'<th scope=row>{html.escape(str(i))}</th>' if index else ''}{cells}</tr>")
     return f'<div class="table-wrap"><table><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+
+
+def measured():
+    """The model of taste term by term: raw stimulus vs representations, unsupervised features and judges' weights, steering, people."""
+    I = pd.DataFrame(R["taste_space_images"]); Hs = pd.DataFrame(R["taste_space"])
+    pix = I[(I.model == "pixels") & (I.axis == "human")].set_index("set").auc
+    rep = I[(I.layer >= 0) & ~I.model.isin(["pixels", "image statistics"]) & (I.axis == "human")].groupby(["set", "model"]).auc.max().groupby("set").agg(["min", "max"])
+    says = I[I.axis == "says"].groupby("set").auc.agg(["min", "max"])
+    ow, ef = "weak vs open models (obvious axis)", "open vs frontier models (expert axis)"
+    h0 = Hs[(Hs.layer == 0)].groupby("contrast").auc.agg(["min", "max"]); hv = Hs[Hs.layer < 0].set_index(["model", "contrast"]).auc
+    hb = Hs[(Hs.layer >= 0) & (Hs.contrast == ef)].groupby("model").auc.max()
+    tfc = R["taste_features_craft"]; lab = tfc["labels"]["PC2"]; sm = pd.DataFrame(tfc["summary"]).set_index("pc")
+    st = R["steering"]
+    E = pd.concat([pd.DataFrame(st["haiku"]["effects"]).assign(variant="all haiku"), pd.DataFrame(st["haiku_craft"]["effects"]).assign(variant="topic removed")])
+    sig = (E.lo > 0) | (E.hi < 0); same = np.sign(E.effect) == np.sign(E.observed)
+    k2 = pd.DataFrame(st["haiku_craft"]["effects"]).query("feature == 'PC2'").set_index("judge")
+    W = pd.DataFrame(R["taste_features"]["weights"]); Wc = pd.DataFrame(tfc["weights"])
+    L = R["lapis_taste"]; Ls = pd.DataFrame(L["shares"]).set_index(["group", "part"]); lp, lrep = lapis_taste.load()
+    groups = lambda w: pd.DataFrame({"qwen": w.loc[["qwen3.5-27b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b"]].mean(), "gemma": w.loc[["gemma-4-26b-a4b", "gemma-4-31b"]].mean(), "claude": w.loc[ANCHOR]})
+    gap = lambda w: (groups(w).max(axis=1) - groups(w).min(axis=1)).max()
+    fam_gap, fam_gap_qg = max(gap(W), gap(Wc)), max((groups(w).qwen - groups(w).gemma).abs().max() for w in [W, Wc])
+    bs = pd.DataFrame(L["by_style"]).sort_values("highbrow"); style = lambda x: ", ".join(x.str.replace("_", " ").tolist()[:-1]) + " and " + x.str.replace("_", " ").tolist()[-1]
+    sh = lambda g, part: Ls.loc[(g, part), "share"]
+    parts = Ls.index.get_level_values(1).unique()
+    A = pd.DataFrame(st["art"]).set_index(["condition", "depth", "alpha"])
+    tm = pd.DataFrame(R["taste_model"]["shares"]).set_index("judge")["random (vote to vote)"]
+    shares_tab = Ls.share.unstack(0).reindex(parts).rename(columns={"lay": "lay vote", "lover": "art lover's vote"})
+    effects_tab = k2[["effect", "lo", "hi", "observed"]].reindex(["qwen3.5-0.8b", "qwen3.5-2b", "gemma-4-e2b", "qwen3.5-4b", "qwen3.5-27b", "gemma-4-31b"]).rename(
+        columns={"effect": "steering effect", "lo": "95% CI low", "hi": "95% CI high", "observed": "observed weight ρ"})
+    return f"""
+<section id="measured">
+<h2>The model of taste, term by term</h2>
+<p>value = x·φ<sup>obvious</sup> + x·φ<sup>non-obvious</sup> + x·φ<sub>θ</sub><sup>subjective</sup> + ξ, measured term by term: whether the raw stimulus x already separates good from bad, features of x found without labels and every judge's weight on them, a causal test of those weights by steering, and real people for the subjective and random terms.</p>
+
+<h3>1 · Raw pixels hardly separate good from bad images; every model's representation does</h3>
+<p>Reading the human score straight out of 32×32 pixels separates the top from the bottom third of AVA photos at AUC {f2(pix['ava'])} and of LAPIS paintings at {f2(pix['lapis'])} (held out). Every model's representation, down to Qwen3.5-0.8B, reaches {f2(rep.loc['ava', 'min'])}–{f2(rep.loc['ava', 'max'])} (photos) and {f2(rep.loc['lapis', 'min'])}–{f2(rep.loc['lapis', 'max'])} (paintings). What the models <i>say</i> ranges from {f2(says.loc['ava', 'min'])} to {f2(says.loc['ava', 'max'])} on photos, rising with size. Haiku differ: weak and strong writers also differ in surface style, so even the token embeddings separate them (weak vs open writers {f2(h0.loc[ow, 'min'])}–{f2(h0.loc[ow, 'max'])}, open vs frontier {f2(h0.loc[ef, 'min'])}–{f2(h0.loc[ef, 'max'])}). On the expert axis, the open-vs-frontier contrast is as readable from Qwen3.5-0.8B's representation ({f2(hb['qwen3.5-0.8b'])}) as from Qwen3.5-27B's ({f2(hb['qwen3.5-27b'])}), while their verdicts differ ({f2(hv[('qwen3.5-0.8b', ef)])} vs {f2(hv[('qwen3.5-27b', ef)])}). The expert features are in every model; expertise is the weight the verdict puts on them.</p>
+{fig("taste_space_images_planes", "Images on held-out readouts of the novices' (obvious) and the experts' beyond-novice (expert) consensus, from pixels and from a small and a large model, coloured by the human score.")}
+{fig("taste_space_images_auc", "Top vs bottom third by human score along each axis: best layer and layer 0 per model, pixels and simple image statistics as horizontal lines, and what each judge says.")}
+{fig("taste_space_planes", "Haiku: token embeddings (layer 0), a novice's and an expert's representation, coloured by the writer.")}
+{fig("taste_space_auc", "Haiku: held-out AUC of each writer contrast along its axis, by model size: best layer, layer 0, and the judge's own rating.")}
+
+<h3>2 · Features found without labels, sorted by who uses them</h3>
+<p>Principal components of Qwen3.5-27B's representation of each haiku, named by Claude from exemplars (each name is checked on held-out forced choices), each judge's weight on each (ρ with its score). Features that judges of every size weight the same way are <b>obvious</b>, those only large judges weight are <b>non-obvious</b>, and those that tiny and large judges weight with opposite signs are <b>high/low-brow</b>. With each topic's average removed, the clearest high/low-brow feature runs from “{html.escape(lab['low'])}” to “{html.escape(lab['high'])}”: tiny judges weight it {sm.loc['PC2', 'tiny']:+.2f}, small {sm.loc['PC2', 'small']:+.2f}, large {sm.loc['PC2', 'large']:+.2f}, and frontier writers have more of it than open models (ρ = {sm.loc['PC2', 'open < frontier models']:.2f}). It is kitsch against craft, found without supervision.</p>
+{fig("taste_features_craft", "Topic-removed features (model haiku): each judge's ρ with each named feature, tiny | small | large judges, and the ground-truth writer contrasts.")}
+{fig("taste_features", "All haiku (topics included, human haiku included): the same map; here several features are topics.")}
+
+<h3>3 · The weights are causal: steering</h3>
+<p>For each judge and feature, the judge's own direction (top fifth minus bottom fifth of haiku by the feature, in its representation at ⅓ depth) is added at the haiku's tokens while it rates, α = ±1, ±2, ±4, on 150 haiku; the effect is the part of the rating change that flips sign with α (large pushes lower every rating). Of {len(E)} judge × feature effects, {int((sig & same).sum())} are significant with the sign of the judge's observed weight and {int((sig & ~same).sum())} with the opposite sign. On the kitsch feature the same push lowers Qwen3.5-0.8B's rating ({k2.loc['qwen3.5-0.8b', 'effect']:+.2f} per unit) and raises Qwen3.5-27B's ({k2.loc['qwen3.5-27b', 'effect']:+.2f}) and Gemma-4-31B's ({k2.loc['gemma-4-31b', 'effect']:+.2f}). At ⅔ depth the same intervention does nothing: by then the verdict has read the haiku.</p>
+{fig("steering_haiku", "Left: steering effect against the judge's observed weight, per judge (colour) and feature (marker). Right: dose-response on the feature the judges disagree on most.")}
+{table(effects_tab)}
+
+<h3>4 · Subjective and random: 281k ratings by real people</h3>
+<p>LAPIS: {lp.participant_id.nunique()} people rated a median of {int(lp.groupby('participant_id').size().median())} artworks each and stated their art interest (VAIAK); {len(lrep)} times a person rated the same artwork twice. A single vote, z-scored within its rater, splits by covariances: shared with people of the other group ({f2(sh('lay', parts[0]))}), shared within one's group beyond that (lay {sh('lay', parts[1]):+.2f}, art lovers {sh('lover', parts[1]):+.2f}; shuffled groups ≈ 0), stable but one's own (lay {f2(sh('lay', parts[2]))}, art lovers {f2(sh('lover', parts[2]))}), and what does not replicate when the same person rates the same artwork again (lay {f2(sh('lay', parts[3]))}, art lovers {f2(sh('lover', parts[3]))}). Lay people share a low-brow taste; art lovers agree with each other less than with lay people. Most of a vote is the person's own taste and noise. Art lovers favour {style(bs['style'].iloc[::-1].head(3))} over {style(bs['style'].head(3))}, but the effect is small: a rater's weight on that axis is reliable across halves of their ratings at r = {f2(L['weight_reliability'])} and tracks art interest at ρ = {f2(L['weight_rho_art_interest'])}. A low-rank factorisation of the raters × artworks matrix explains {pct(L['factor_r2']['1'][1])} of held-out votes with one taste factor and {pct(max(v[1] for v in L['factor_r2'].values()))} at best with more, so own taste is not a few shared dimensions. For the models, vote-to-vote noise ranges from {pct(tm.max())} of a vote ({tm.idxmax()}) to {pct(tm.min())} ({tm.idxmin()}).</p>
+{fig("lapis_taste", "Left: shares of one vote (art lovers' shared part drawn at their within-group level). Middle: each rater's weight on the high-brow axis against art interest. Right: the most low-brow and high-brow styles.")}
+{table(shares_tab)}
+
+<h3>5 · Models barely differ in taste from one another; personas move it a little</h3>
+<p>Large Qwen and Gemma judges weight every feature within {f2(fam_gap_qg)} of each other, and with Claude within {f2(fam_gap)}: between models, the subjective term is small. Prompting Qwen3.5-27B to answer as a person with no interest in art makes it more low-brow (weight on the art lovers' axis {A.loc[('lay', -1.0, 0.0), 'w_highbrow']:+.2f} vs {A.loc[('none', -1.0, 0.0), 'w_highbrow']:+.2f} without a persona); the art-lover persona does not move it ({A.loc[('lover', -1.0, 0.0), 'w_highbrow']:+.2f}). Adding the difference between the two personas' activations at half depth shifts it from {A.loc[('steered', 0.5, -1.0), 'w_highbrow']:+.2f} (α = −1) to {A.loc[('steered', 0.5, 4.0), 'w_highbrow']:+.2f} (α = +4), mostly raising every rating.</p>
+{fig("steering_art", "Qwen3.5-27B rating 400 held-out LAPIS artworks: weight on the art lovers' high-brow axis (style level, with the human consensus as covariate) under persona prompts and under steering.")}
+</section>
+"""
 
 
 def f2(x): return f"{x:.2f}"
@@ -154,6 +215,8 @@ def build():
 {fig("taste_model_shares", "Share of a single vote's variance per judge. The random share also reflects how peaked a family's digit distributions are (Gemma's are much more peaked than Qwen's).")}
 {table(pd.DataFrame(R["taste_model"]["shares"]).set_index("judge").drop(columns=["family"]).rename(columns={"params_b": "params (B)"}))}
 </section>
+
+{measured()}
 
 <section id="haiku">
 <h2>1 · Haiku: who do the judges think writes well?</h2>
