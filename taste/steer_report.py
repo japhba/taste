@@ -59,6 +59,22 @@ def haiku(sfx=""):
     return R, C
 
 
+def controls(sfx="_craft"):
+    """Control directions (random fifths, rescaled to the feature direction's norm; taste.steer_features --controls): the same effect measure."""
+    rows = []
+    files = pd.Series({p: int(p.stem.split("_")[0][len("control"):]) for p in (DATA / f"steer{sfx}").glob("control*_*.parquet")})
+    files = files.groupby([p.stem.split("_", 1)[1] for p in files.index]).idxmax()  # per judge, the run with the most controls
+    for p in files.values:
+        d = pd.read_parquet(p)
+        for f, g in d[d.feature != "none"].groupby("feature"):
+            s = g.pivot(index="item_id", columns="alpha", values="score")
+            anti = pd.concat([(s[a] - s[-a]) / (2 * a) for a in [1.0, 2.0, 4.0]], axis=1).mean(axis=1)
+            rows.append(dict(judge=d.judge.iloc[0], control=f, effect=anti.mean(), abs_effect=abs(anti.mean())))
+    C = pd.DataFrame(rows)
+    if len(C): print(C.round(3).to_string())
+    return C
+
+
 MARKERS = ["o", "s", "D", "^", "v"]
 
 
@@ -101,6 +117,21 @@ def main():
         a1.axhline(0, color="#8a8984", lw=0.8); a1.set_xticks([-4, -2, -1, 0, 1, 2, 4])
         a1.set_xlabel("steering α along the persona difference (− no interest in art, + art lover)"); a1.set_title("Qwen3.5-27B, no persona, steered", loc="left"); a1.legend(frameon=False)
         save(fig, "steering_art")
+    C = controls()
+    if len(C):
+        K = pd.DataFrame(out["haiku_craft"]["effects"]).query("feature == 'PC2'").set_index("judge")
+        js = [j for t in TIERS.values() for j in t if j in set(C.judge)]
+        rank = {j: float((C[C.judge == j].effect.abs() >= abs(K.loc[j, "effect"])).mean()) for j in js}  # share of controls at least as large
+        out["controls_craft"] = C.to_dict("records"); out["controls_craft_share_as_large"] = rank
+        fig, ax = plt.subplots(figsize=(8, 4), layout="constrained")
+        for x, j in enumerate(js):
+            c = C[C.judge == j].effect.values
+            ax.scatter(x + RNG.uniform(-0.12, 0.12, len(c)), c, s=18, color="#b9b7b0", zorder=2, label="random directions, same norm" if x == 0 else None)
+            t = next(t for t, v in TIERS.items() if j in v)
+            ax.scatter([x], [K.loc[j, "effect"]], s=80, color=TIER_COLOR[t], edgecolor="white", zorder=3, label=f"kitsch feature, {t} judge" if t not in [next(tt for tt, v in TIERS.items() if jj in v) for jj in js[:x]] else None)
+        ax.axhline(0, color="#8a8984", lw=0.8); ax.set_xticks(range(len(js)), [SHORT(j) for j in js], rotation=30, ha="right")
+        ax.set_ylabel("rating change per unit of steering"); ax.set_title("steering along the kitsch feature vs along random directions", loc="left"); ax.legend(frameon=False)
+        save(fig, "steering_controls")
     record("steering", out)
 
 

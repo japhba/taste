@@ -218,38 +218,42 @@ def craft_axis(it, S, P):
 
 
 def steering(it, S, P):
-    """Finding 2, causal half: steering each judge along its own direction for the concrete-vs-cliche feature (taste.steer_features --craft)."""
-    R = pd.DataFrame(json.loads(RESULTS.read_text())["steering"]["haiku_craft"]["curves"])
-    E = pd.DataFrame(json.loads(RESULTS.read_text())["steering"]["haiku_craft"]["effects"])
+    """Finding 2, causal half: steering each judge along its own direction for the concrete-vs-cliche feature (taste.steer_features --craft),
+    against random directions of the same norm (--controls)."""
+    st = json.loads(RESULTS.read_text())["steering"]
+    E = pd.DataFrame(st["haiku_craft"]["effects"]).query("feature == 'PC2'").set_index("judge")
+    C = pd.DataFrame(st["controls_craft"]); share = st["controls_craft_share_as_large"]
     lab = json.loads(RESULTS.read_text())["taste_features_craft"]["labels"]["PC2"]
-    shades = {"tiny": ["#c0302f", "#e06a5f", "#eb9a8f"], "small": ["#8a8984", "#b9b7b0", "#d6d4cf"], "large": ["#1b8f65", "#0f5c40", "#5fbf97"]}
-    order = [j for t in TIERS.values() for j in t if j in set(R.judge)]
-    color = {j: shades[t][i] for t, js in TIERS.items() for i, j in enumerate([j for j in js if j in set(R.judge)])}
-    name = lambda j: {"qwen3.5-0.8b": "Qwen3.5-0.8B", "qwen3.5-2b": "Qwen3.5-2B", "gemma-4-e2b": "Gemma-4-E2B", "qwen3.5-4b": "Qwen3.5-4B", "qwen3.5-9b": "Qwen3.5-9B",
-                      "gemma-4-e4b": "Gemma-4-E4B", "qwen3.5-27b": "Qwen3.5-27B", "gemma-4-26b-a4b": "Gemma-4-26B", "gemma-4-31b": "Gemma-4-31B"}[j]
-    fig, ax = plt.subplots(figsize=(5.0, 3.6), layout="constrained")
-    ax.axhline(0, color=MUTED, lw=1); ax.axvline(0, color=MUTED, lw=1)
-    for j in order:
-        g = R[(R.judge == j) & (R.feature == "PC2")].sort_values("alpha")
-        ax.plot(g.alpha, g.delta, color=color[j], lw=2, marker="o", ms=5, mec="white", mew=1, label=name(j))
-    ax.set_xlabel("push toward concrete images (+) or clichés (−)"); ax.set_ylabel("change in the judge's rating (1–9)")
-    fig.legend(loc="outside lower center", ncol=3, frameon=False)
+    tier = {j: t for t, js in TIERS.items() for j in js}; tcolor = {"tiny": "#c0302f", "small": "#8a8984", "large": "#1b8f65"}
+    js = [j for t in TIERS.values() for j in t if j in E.index]
+    name = {"qwen3.5-0.8b": "Qwen 0.8B", "qwen3.5-2b": "Qwen 2B", "gemma-4-e2b": "Gemma E2B", "qwen3.5-4b": "Qwen 4B", "qwen3.5-9b": "Qwen 9B",
+            "gemma-4-e4b": "Gemma E4B", "qwen3.5-27b": "Qwen 27B", "gemma-4-26b-a4b": "Gemma 26B", "gemma-4-31b": "Gemma 31B"}
+    fig, ax = plt.subplots(figsize=(5.0, 3.8), layout="constrained")
+    ax.axhline(0, color=MUTED, lw=1)
+    for x, j in enumerate(js):
+        c = C[C.judge == j].effect.values
+        ax.scatter(x + RNG.uniform(-0.15, 0.15, len(c)), c, s=12, color="#c9c7c0", zorder=2, label="random direction, same size" if x == 0 else None)
+        ax.scatter([x], [E.loc[j, "effect"]], s=70, color=tcolor[tier[j]], edgecolor="white", linewidth=1, zorder=3)
+    ax.scatter([], [], s=70, color=tcolor["tiny"], label="concrete-images feature, tiny judge"); ax.scatter([], [], s=70, color=tcolor["large"], label="… small or large judge")
+    ax.set_xticks(range(len(js)), [name[j] for j in js], rotation=40, ha="right"); ax.set_ylabel("rating change per unit of push")
+    fig.legend(loc="outside lower center", ncol=1, frameon=False)
     p = save(fig, "finding_steering")
-    e = E[E.feature == "PC2"].set_index("judge")
-    record("finding_steering", e.reset_index().to_dict("records"))
+    record("finding_steering", E.reset_index().to_dict("records"))
     B = pd.read_parquet(DATA / "steer/haiku_features_craft.parquet")
     chips = lambda i: [chip("Qwen 0.8B", P.loc[i, "qwen3.5-0.8b"]), chip("Qwen 27B", P.loc[i, "qwen3.5-27b"]), chip("Claude", P.loc[i, ANCHOR])]
     model = B.index[~it.loc[B.index, "generator"].str.startswith(("smollm", "claude"))]  # no broken text; no Claude-written haiku next to Claude's rating
     lo = (P.loc[model, "qwen3.5-0.8b"] - P.loc[model, "qwen3.5-27b"]).where(B.loc[model, "PC2"] <= B.loc[model, "PC2"].quantile(0.05)).idxmax()  # cliché end, small judge's favourite
     hi = (P.loc[model, "qwen3.5-27b"] - P.loc[model, "qwen3.5-0.8b"]).where(B.loc[model, "PC2"] >= B.loc[model, "PC2"].quantile(0.95)).idxmax()  # concrete end, large judge's favourite
     ex = pair_html("cliché end vs concrete end of the feature", haiku_card(it.haiku[lo], it.generator[lo], chips(lo)), haiku_card(it.haiku[hi], it.generator[hi], chips(hi)))
-    sub = (f"Inside each judge, push a haiku's representation from clichés toward concrete images and read its rating: Qwen3.5-0.8B likes it less "
-           f"({e.loc['qwen3.5-0.8b', 'effect']:+.2f} per unit), Qwen3.5-27B ({e.loc['qwen3.5-27b', 'effect']:+.2f}) and Gemma-4-31B ({e.loc['gemma-4-31b', 'effect']:+.2f}) like it more. "
-           "The weight is causal, and its sign flips with size.")
+    big = [j for j in js if tier[j] == "large" and share[j] == 0]
+    cmax = C[C.judge.isin(big)].effect.abs().max()
+    sub = (f"Inside the judge, push a haiku's representation from clichés toward concrete images. Large judges then rate it higher "
+           f"(Qwen3.5-27B {E.loc['qwen3.5-27b', 'effect']:+.2f}, Gemma-4-31B {E.loc['gemma-4-31b', 'effect']:+.2f} per unit), more than any random push of the same size "
+           f"(at most {cmax:.2f}): they use the feature. Tiny judges, which prefer the clichés, barely react: their small drops are within what random pushes do.")
     foot = (f"Feature: PC2 of Qwen3.5-27B's representation of model haiku, topic means removed (unsupervised; named by Claude, {lab['label_accuracy']:.0%} on held-out pairs). "
-            "Each judge's own direction (top minus bottom fifth, ⅓ depth) added at the haiku's tokens; α = ±1, ±2, ±4; 150 haiku; effect = the part that flips sign with α.")
-    return slide(2, "Haiku · steering", "Push a haiku toward concrete images inside the model: small judges like it less, large ones more", sub, png_uri(p), ex, foot)
-
+            "Each judge's own direction (top minus bottom fifth, ⅓ depth) added at the haiku's tokens; α = ±1, ±2, ±4; 150 haiku; effect = the part that flips sign with α. "
+            "Random directions: the difference between two random fifths of haiku, rescaled to the same size (10–20 per judge).")
+    return slide(2, "Haiku · steering", "Push a haiku toward concrete images inside a large judge, and it likes the haiku more", sub, png_uri(p), ex, foot)
 
 # ---------------------------------------------------------------- 3. small models know more than they say
 def know_more(it, S, P):

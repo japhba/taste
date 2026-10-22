@@ -54,7 +54,10 @@ def main():
     ax = axs[0, 2]; by_size(ax, Wc["PC2"].drop(index=[j for j in Wc.index if fam(j) not in ("qwen", "gemma") and j != ANCHOR]))
     ax.axhline(0, color="#8a8984", lw=0.8); ax.set_ylabel("weight: ρ(feature, judge's rating)")
     ax.set_title(f"high/low-brow: small and large judges disagree\n“{labc['PC2']['low']}”\n→ “{labc['PC2']['high']}”", loc="left")
-    ax = axs[1, 0]; by_size(ax, E.effect); ax.axhline(0, color="#8a8984", lw=0.8)
+    ax = axs[1, 0]
+    C = pd.DataFrame(R["steering"]["controls_craft"]).groupby("judge").effect.agg(["min", "max"])
+    ax.vlines([SIZE(j) for j in C.index], C["min"], C["max"], color="#c9c7c0", lw=6, label="random directions, same size")
+    by_size(ax, E.effect); ax.axhline(0, color="#8a8984", lw=0.8); ax.legend(frameon=False, loc="upper left")
     ax.set_ylabel("rating change per unit of steering"); ax.set_title("high/low-brow, causally: steering each judge\nalong its own direction for that feature", loc="left")
     for ax, part, people_part, ttl in [(axs[1, 1], "subjective: its own", parts[2], "subjective: stable, but the voter's own"),
                                        (axs[1, 2], "random (vote to vote)", parts[3], "random: does not replicate")]:

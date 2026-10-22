@@ -51,6 +51,12 @@ def measured():
     E = pd.concat([pd.DataFrame(st["haiku"]["effects"]).assign(variant="all haiku"), pd.DataFrame(st["haiku_craft"]["effects"]).assign(variant="topic removed")])
     sig = (E.lo > 0) | (E.hi < 0); same = np.sign(E.effect) == np.sign(E.observed)
     k2 = pd.DataFrame(st["haiku_craft"]["effects"]).query("feature == 'PC2'").set_index("judge")
+    Cn = pd.DataFrame(st.get("controls_craft", []))
+    share = st.get("controls_craft_share_as_large", {})
+    beyond = [j for j, v in share.items() if v == 0]; within = {j: v for j, v in share.items() if v > 0}
+    ctrl_txt = (f"Control: steering along random directions of the same norm (the difference between two random fifths of haiku, {Cn.groupby('judge').control.nunique().min()}–{Cn.groupby('judge').control.nunique().max()} per judge). "
+                f"They too move ratings (by up to {Cn.abs_effect.max():.2f} per unit, median {Cn.effect.median():+.2f}); the kitsch effect is larger than every control for {', '.join(beyond) or 'no judge'}"
+                f"{'; for ' + ', '.join(f'{j} ({v:.0%} of controls as large)' for j, v in within.items()) + ' it is not, and there the evidence is only that steering effects and observed weights agree in sign across that judge’s features' if within else ''}.") if len(Cn) else ""
     W = pd.DataFrame(R["taste_features"]["weights"]); Wc = pd.DataFrame(tfc["weights"])
     L = R["lapis_taste"]; Ls = pd.DataFrame(L["shares"]).set_index(["group", "part"]); lp, lrep = lapis_taste.load()
     groups = lambda w: pd.DataFrame({"qwen": w.loc[["qwen3.5-27b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b"]].mean(), "gemma": w.loc[["gemma-4-26b-a4b", "gemma-4-31b"]].mean(), "claude": w.loc[ANCHOR]})
@@ -83,8 +89,9 @@ def measured():
 {fig("taste_features", "All haiku (topics included, human haiku included): the same map; here several features are topics.")}
 
 <h3>3 · The weights are causal: steering</h3>
-<p>For each judge and feature, the judge's own direction (top fifth minus bottom fifth of haiku by the feature, in its representation at ⅓ depth) is added at the haiku's tokens while it rates, α = ±1, ±2, ±4, on 150 haiku; the effect is the part of the rating change that flips sign with α (large pushes lower every rating). Of {len(E)} judge × feature effects, {int((sig & same).sum())} are significant with the sign of the judge's observed weight and {int((sig & ~same).sum())} with the opposite sign. On the kitsch feature the same push lowers Qwen3.5-0.8B's rating ({k2.loc['qwen3.5-0.8b', 'effect']:+.2f} per unit) and raises Qwen3.5-27B's ({k2.loc['qwen3.5-27b', 'effect']:+.2f}) and Gemma-4-31B's ({k2.loc['gemma-4-31b', 'effect']:+.2f}). At ⅔ depth the same intervention does nothing: by then the verdict has read the haiku.</p>
+<p>For each judge and feature, the judge's own direction (top fifth minus bottom fifth of haiku by the feature, in its representation at ⅓ depth) is added at the haiku's tokens while it rates, α = ±1, ±2, ±4, on 150 haiku; the effect is the part of the rating change that flips sign with α (large pushes lower every rating). Across {len(E)} judge × feature pairs the steering effect tracks the observed weight at r = {np.corrcoef(E.observed, E.effect)[0, 1]:.2f}; {int((sig & same).sum())} effects are significant with the sign of the judge's observed weight and {int((sig & ~same).sum())} with the opposite sign. On the kitsch feature the same push lowers Qwen3.5-0.8B's rating ({k2.loc['qwen3.5-0.8b', 'effect']:+.2f} per unit) and raises Qwen3.5-27B's ({k2.loc['qwen3.5-27b', 'effect']:+.2f}) and Gemma-4-31B's ({k2.loc['gemma-4-31b', 'effect']:+.2f}). {ctrl_txt} At ⅔ depth the same intervention does nothing: by then the verdict has read the haiku.</p>
 {fig("steering_haiku", "Left: steering effect against the judge's observed weight, per judge (colour) and feature (marker). Right: dose-response on the feature the judges disagree on most.")}
+{fig("steering_controls", "Steering along the kitsch feature (coloured) against random directions of the same size (grey), per judge.", "75%")}
 {table(effects_tab)}
 
 <h3>4 · Subjective and random: 281k ratings by real people</h3>

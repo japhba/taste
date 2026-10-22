@@ -6,7 +6,9 @@ values across their later layers), and beyond |alpha| ~ 4 any push lowers the ra
 flips sign with alpha (taste.steer_report). Prediction: it follows the sign of the judge's observed weight, so a high/low-brow
 feature pushes tiny and large judges in opposite directions.
 
-  python -m taste.steer_features qwen3.5-0.8b qwen3.5-27b ... [--n 150] [--craft --features PC1 PC2 PC5]
+  python -m taste.steer_features qwen3.5-0.8b qwen3.5-27b ... [--n 150] [--craft --features PC1 PC2 PC5] [--controls 3]
+  --controls k: k control directions instead (difference between two random fifths of haiku, rescaled to the norm of the first
+  feature's direction) -> data/steer<sfx>/control<k>_<judge>.parquet
 -> data/steer/haiku_<judge>.parquet (item_id, feature, alpha, p1..p9, digit_mass, score); with --craft (the topic-removed features,
    steered on model haiku only) data/steer_craft/haiku_<judge>.parquet
 """
@@ -54,23 +56,29 @@ def directions(name, feats, index):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("judges", nargs="+"); ap.add_argument("--n", type=int, default=150)
-    ap.add_argument("--craft", action="store_true"); ap.add_argument("--features", nargs="+", default=FEATURES); a = ap.parse_args()
+    ap.add_argument("--craft", action="store_true"); ap.add_argument("--features", nargs="+", default=FEATURES); ap.add_argument("--controls", type=int, default=0)
+    a = ap.parse_args()
     sfx = "_craft" if a.craft else ""
     feats = pd.read_parquet(DATA / f"steer/haiku_features{sfx}.parquet")[a.features]  # oriented PC scores (taste.taste_features)
     it = items("haiku").reindex(feats.index)
     test = it.sample(a.n, random_state=0)
     (DATA / f"steer{sfx}").mkdir(exist_ok=True)
+    if a.controls:  # random fifths: the same marginal as the first feature, no meaning
+        rng = np.random.default_rng(1)
+        feats = feats.assign(**{f"control{k + 1}": rng.permutation(feats[a.features[0]].values) for k in range(a.controls)})
     for name in a.judges:
-        out = DATA / f"steer{sfx}" / f"haiku_{name}.parquet"
+        out = DATA / f"steer{sfx}" / (f"control{a.controls}_{name}.parquet" if a.controls else f"haiku_{name}.parquet")
         if out.exists(): continue
         layer, D, hnorm = directions(name, feats, it.index)
+        if a.controls:
+            D = {f"control{k + 1}": D[f"control{k + 1}"] * np.linalg.norm(D[a.features[0]]) / np.linalg.norm(D[f"control{k + 1}"]) for k in range(a.controls)}
         r = Rater(name); steer = SpanSteer(r.model)
         print(name, "steering at layer", layer, "mean |h|", round(hnorm, 1), {f: round(float(np.linalg.norm(v)), 2) for f, v in D.items()}, flush=True)
         recs = []
         for row in tqdm(test.itertuples(), total=len(test), desc=name, mininterval=30):
             enc, span, _ = r.encode_haiku([row.haiku])
             recs.append(dict(item_id=row.Index, feature="none", alpha=0.0, p=r.forward(enc, span, hidden=False)["p_digits"][0]))
-            for f in a.features:
+            for f in D:
                 for al in ALPHAS:
                     steer.on(layer, torch.tensor(al * D[f]), span)
                     recs.append(dict(item_id=row.Index, feature=f, alpha=al, p=r.forward(enc, span, hidden=False)["p_digits"][0])); steer.off()
