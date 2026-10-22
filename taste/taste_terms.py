@@ -115,7 +115,7 @@ def pooled(n_boot=300):
     g = group_of(it); P = S.rank(pct=True).mean(axis=1); op, fr = it.index[(g == "open") & short], it.index[(g == "frontier") & short]
     pairs = [(t, (P[op[it.topic[op] == t]] - P[g == "open"].mean()).abs(), (P[fr[it.topic[fr] == t]] - P[g == "frontier"].mean()).abs()) for t in it.topic[op].unique()]
     t, a, b = min((p for p in pairs if len(p[1]) and len(p[2])), key=lambda p: p[1].min() + p[2].min())
-    TERMS = {"needs no expertise": ends(B, S, ["Engulfed by darkness", "Pale mist veils the lake"]),
+    TERMS = {"needs no expertise": ends(B, S, ["So who's going to?", "Pale mist veils the lake"]),
              "needs expertise": (it.index[g == "open"], it.index[g == "frontier"], S, [a.idxmin(), b.idxmin()]),
              "high-brow vs low-brow": ends(Bc, Sd, ["Bright sounds fill the air\nJoyful echoes", "Empty chair still warm"])}
     rows = []
