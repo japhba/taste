@@ -15,4 +15,6 @@ python -m taste.taste_features         # unsupervised features, judges' weights,
 python -m taste.taste_features --craft
 python -m taste.steer_report           # steering results (the GPU runs: taste.steer, taste.steer_features)
 python -m taste.taste_terms            # one panel per term of the model of taste
+python -m taste.ds_latent              # DeepSeek-V4.1's own PCs, probes by depth
+python -m taste.ds_persona             # DeepSeek-V4.1 under personas (taste.ds_rate --persona)
 python -m taste.report

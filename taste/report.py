@@ -46,7 +46,7 @@ def measured():
     h0 = Hs[(Hs.layer == 0)].groupby("contrast").auc.agg(["min", "max"]); hv = Hs[Hs.layer < 0].set_index(["model", "contrast"]).auc
     hb = Hs[(Hs.layer >= 0) & (Hs.contrast == ef)].groupby("model").auc.max()
     tfc = R["taste_features_craft"]; lab = tfc["labels"]["PC2"]; sm = pd.DataFrame(tfc["summary"]).set_index("pc"); hp = "r/haiku top < journal (projected)"
-    ob = next(k for k in tfc["chosen"] if sm.loc[k, "class"] == "obvious"); nonob = [k for k in tfc["chosen"] if sm.loc[k, "class"] == "non-obvious"]
+    ob = next(k for k in tfc["chosen"] if sm.loc[k, "class"] == "needs no expertise"); nonob = [k for k in tfc["chosen"] if sm.loc[k, "class"] == "needs expertise"]
     st = R["steering"]
     E = pd.concat([pd.DataFrame(st["haiku"]["effects"]).assign(variant="all haiku"), pd.DataFrame(st["haiku_craft"]["effects"]).assign(variant="topic removed")])
     sig = (E.lo > 0) | (E.hi < 0); same = np.sign(E.effect) == np.sign(E.observed)

@@ -126,9 +126,9 @@ def main():
         m, v = mv[j]
         for shuffle, out in [(False, rows), (True, ctrl)]:
             N, Ep = consensus(Zc, (j,), shuffle)
-            us = U[school].mean(1)
+            us = U[school].mean(1) if school else pd.Series(0.0, it.index)  # no family members (DeepSeek): no school, its share is 0
             ok = m.notna() & N.notna() & Ep.notna() & us.notna()
-            fr = decompose(m[ok].values, v[ok].values, N[ok].values, Ep[ok].values, RNG.permutation(us[ok].values) if shuffle else us[ok].values)
+            fr = decompose(m[ok].values, v[ok].values, N[ok].values, Ep[ok].values, RNG.permutation(us[ok].to_numpy(copy=True)) if shuffle else us[ok].values)
             out.append(dict(judge=j, params_b=BY_NAME[j].params_b, family=fam(j), **dict(zip(PARTS, fr))))
         print(j, {k_: round(v_, 3) for k_, v_ in rows[-1].items() if k_ in PARTS}, flush=True)
     D, C = pd.DataFrame(rows).set_index("judge"), pd.DataFrame(ctrl).set_index("judge")

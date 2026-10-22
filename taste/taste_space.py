@@ -115,7 +115,7 @@ def plot_curves(D):
         for f, dd in d[(d.layer < 0) & d.family.isin(["qwen", "gemma"])].groupby("family"):
             dd = dd.sort_values("params_b")
             ax.plot(dd.params_b, dd.auc, color=FAMILY_COLOR[f], lw=2, ls=(0, (4, 2)), marker="o", ms=6, mfc="white", mec=FAMILY_COLOR[f], mew=1.5, label=f"{f.capitalize()}: what it says")
-        ax.axhline(0.5, color="#8a8984", lw=1); ax.set_xscale("log"); ax.set_title(name, loc="left"); ax.set_xlabel("model size (billion parameters)")
+        ax.axhline(0.5, color="#8a8984", lw=1); ax.set_xscale("log"); ax.set_title(name.replace("obvious axis", "novice axis"), loc="left"); ax.set_xlabel("model size (billion parameters)")
     axs[0].set_ylabel("held-out AUC"); axs[0].set_ylim(0.3, 1.0)
     fig.legend(*axs[0].get_legend_handles_labels(), loc="outside lower center", ncol=3, frameon=False)
     save(fig, "taste_space_auc")
@@ -141,7 +141,7 @@ def plot_planes(it, g, fold, Zc):
             ax.scatter(a[m], b[m], s=8, c=GROUP_COLOR[grp], linewidths=0, alpha=0.85, label={"weak": "weak writers", "open": "competent open models", "frontier": "frontier models"}[grp])
         ax.set_title(f"{ttl}\nAUC weak|open {sep[list(CONTRASTS)[0]]:.2f}\nAUC open|frontier {sep[list(CONTRASTS)[1]]:.2f}", loc="left")
         ax.axhline(0, color="#8a8984", lw=0.8); ax.axvline(0, color="#8a8984", lw=0.8)
-        ax.set_xlabel("obvious axis"); ax.set_ylabel("expert axis"); ax.set_xticks([]); ax.set_yticks([]); ax.set_box_aspect(1)
+        ax.set_xlabel("novice axis"); ax.set_ylabel("expert axis"); ax.set_xticks([]); ax.set_yticks([]); ax.set_box_aspect(1)
         lim = np.percentile(np.abs(np.r_[a[sub], b[sub]]), 99) * 1.1; ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim)
     h, l = axs[0].get_legend_handles_labels(); h = [h[1], h[0], h[2]]; l = [l[1], l[0], l[2]]  # weak, open, frontier
     fig.legend(h, l, loc="outside lower center", ncol=3, frameon=False, markerscale=2)

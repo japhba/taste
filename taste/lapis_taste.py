@@ -23,7 +23,7 @@ from taste.common import save, record
 from taste.paths import RAW
 
 PIAA = RAW / "asmaerten__LAPIS/piaa/piaa.csv"
-PARTS = ["obvious", "group taste (high- or low-brow)", "own taste", "random (vote to vote)"]
+PARTS = ["shared by everyone", "group taste (high- or low-brow)", "own taste", "random (vote to vote)"]
 PART_COLOR = ["#2a78d6", "#1b8f65", "#e8a33a", "#b9b7b0"]
 RNG = np.random.default_rng(0)
 
@@ -153,34 +153,42 @@ def main():
     W.columns = [0, 1, "vaiak"]; plot(T, W, by_style, rel, rho)
 
 
-def plot(T, W, by_style, rel, rho):
+def shares_panel(ax, T):
     """Shares of one vote per group. A group's shared part is drawn as what a vote shares with another member of its group: everyone's
-    part (cross-group) plus the group's own extra; art lovers share less with each other than with lay people, so theirs is drawn
-    at their within-group level and the deficit is noted."""
-    fig, axs = plt.subplots(1, 3, figsize=(14, 3.8), layout="constrained", gridspec_kw=dict(width_ratios=[1.1, 1, 1.2]))
-    ax = axs[0]
+    part (cross-group) plus the group's own extra; art lovers share less with each other than with lay people (noted in the title)."""
+    note = ""
     for y, g in enumerate(["lover", "lay"]):
         sh = dict(zip(PARTS, T.loc[g, "share"].values)); within = sh[PARTS[0]] + sh[PARTS[1]]
         parts = [min(sh[PARTS[0]], within), max(sh[PARTS[1]], 0), sh[PARTS[2]], sh[PARTS[3]]]
         left = 0
         for k, v in enumerate(parts):
             ax.barh(y, v, left=left, color=PART_COLOR[k], edgecolor="white", linewidth=2, label=PARTS[k] if y == 1 else None); left += v
-        if sh[PARTS[1]] < 0: ax.annotate(f"art lovers agree with each other ({within:.2f})\nless than with lay people ({sh[PARTS[0]]:.2f})", (within, y), xytext=(0.3, y + 0.42),
-                                         textcoords="data", arrowprops=dict(arrowstyle="-", color="#6b6a66"), color="#3d3d3a", va="center")
+        if sh[PARTS[1]] < 0: note = f"art lovers agree with each other ({within:.2f})\nless than with lay people ({sh[PARTS[0]]:.2f})"
     ax.set_yticks([0, 1], ["art lover's vote", "lay vote"]); ax.set_xlim(0, 1); ax.set_xlabel("share of one vote's variance")
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=2, frameon=False)
+    ax.set_title(note, loc="left"); ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=2, frameon=False)
+
+
+def styles_panel(ax, by_style):
+    s = by_style.sort_values("highbrow"); s = pd.concat([s.head(7), s.tail(7)])  # the 7 most low-brow and the 7 most high-brow styles
+    ax.barh(np.arange(len(s)), s.highbrow, color=np.where(s.highbrow > 0, "#1b8f65", "#c0302f"), height=0.7)
+    ax.set_yticks(np.arange(len(s)), [x.replace("_", " ") for x in s.index]); ax.axvline(0, color="#8a8984", lw=0.8)
+    ax.set_xlabel("art lovers minus lay people (z)"); ax.set_title("high-brow and low-brow styles", loc="left")
+
+
+def plot(T, W, by_style, rel, rho):
+    fig, axs = plt.subplots(1, 3, figsize=(14, 3.8), layout="constrained", gridspec_kw=dict(width_ratios=[1.1, 1, 1.2]))
+    shares_panel(axs[0], T)
     ax = axs[1]
     w = W[[0, 1]].mean(axis=1)
     ax.scatter(W.vaiak, w, s=10, c="#3d3d3a", linewidths=0, alpha=0.6)
     b = np.polyfit(W.vaiak, w, 1); x = np.linspace(W.vaiak.min(), W.vaiak.max(), 2); ax.plot(x, np.polyval(b, x), color="#1b8f65", lw=2)
     ax.axhline(0, color="#8a8984", lw=0.8); ax.set_xlabel("art interest (VAIAK)"); ax.set_ylabel("weight on the high-brow axis")
     ax.set_title(f"raters' weights: split-half r = {rel:.2f}, ρ = {rho:.2f}", loc="left")
-    ax = axs[2]
-    s = by_style.sort_values("highbrow"); s = pd.concat([s.head(7), s.tail(7)])  # the 7 most low-brow and the 7 most high-brow styles
-    ax.barh(np.arange(len(s)), s.highbrow, color=np.where(s.highbrow > 0, "#1b8f65", "#c0302f"), height=0.7)
-    ax.set_yticks(np.arange(len(s)), [x.replace("_", " ") for x in s.index]); ax.axvline(0, color="#8a8984", lw=0.8)
-    ax.set_xlabel("art lovers minus lay people (z)"); ax.set_title("high-brow and low-brow styles", loc="left")
+    styles_panel(axs[2], by_style)
     save(fig, "lapis_taste")
+    fig, axs = plt.subplots(1, 2, figsize=(11, 4.2), layout="constrained", gridspec_kw=dict(width_ratios=[1.1, 1]))  # for the slide
+    shares_panel(axs[0], T); styles_panel(axs[1], by_style)
+    save(fig, "lapis_taste_slide")
 
 
 if __name__ == "__main__":

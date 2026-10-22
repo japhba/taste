@@ -21,7 +21,7 @@ from taste.models import BY_NAME
 from taste.taste_space import targets, readout
 
 SETS = {"ava": "AVA photographs", "lapis": "LAPIS paintings"}
-AXES = {"obvious": "obvious axis (novices)", "expert": "expert axis (beyond novices)", "human": "human score itself (supervised)"}
+AXES = {"obvious": "novice axis (needs no expertise)", "expert": "expert axis (needs expertise)", "human": "human score itself (supervised)"}
 RAW = {"pixels": "pixels (raw stimulus)", "image statistics": "image statistics (colour, contrast, edges, ...)"}
 PIX = DATA / "images_pixels.npz"
 QUALITY = LinearSegmentedColormap.from_list("quality", ["#c0302f", "#d9d6cf", "#1b8f65"])
@@ -43,11 +43,11 @@ def high_low(gt, score):
     return roc_auc_score(hi[lo | hi], score[lo | hi])
 
 
-def representations(it):
-    """name -> (layer, depth, items x features) for the raw stimulus and every model layer."""
+def representations(it, only=None):
+    """name -> (layer, depth, items x features) for the raw stimulus and every model layer (or only the models in `only`)."""
     stats = pd.read_parquet(DATA / "images_features.parquet").set_index("item_id").reindex(it.index).values
     out = {"pixels": [(0, 0.0, pixels(it))], "image statistics": [(0, 0.0, stats)]}
-    for r in sorted((p.stem for p in (HIDDEN / "images").glob("*.npz")), key=lambda r: (fam(r), BY_NAME[r].params_b)):
+    for r in sorted((p.stem for p in (HIDDEN / "images").glob("*.npz") if only is None or p.stem in only), key=lambda r: (fam(r), BY_NAME[r].params_b)):
         ids, layers, H = hidden("images", r, "mean")
         pos = pd.Series(np.arange(len(ids)), index=ids).reindex(it.index).values
         out[r] = [(int(l), l / layers.max(), H[pos, li].astype(np.float32)) for li, l in enumerate(layers)]
@@ -106,7 +106,7 @@ def plot_curves(D):
 def plot_planes(it, S, reps):
     """Pixels, a novice and an expert representation, each on its own held-out obvious / expert axes, coloured by the human score."""
     show = [("pixels", 0, "pixels (raw stimulus)"), ("qwen3.5-0.8b", 2 / 3, "novice: Qwen3.5-0.8B"), ("qwen3.5-27b", 2 / 3, "expert: Qwen3.5-27B")]
-    fig, axs = plt.subplots(len(SETS), len(show), figsize=(11, 7.6), layout="constrained")
+    fig, axs = plt.subplots(len(SETS), len(show), figsize=(11, 8.4), layout="constrained")
     for row, ds in zip(axs, SETS):
         m = (it.dataset == ds).values; gt = it.human_score.values[m]; fold = RNG.integers(0, 5, m.sum()); Zc = zscore(S[m])
         pct = pd.Series(gt).rank(pct=True).values; order = np.argsort(np.abs(pct - 0.5))  # extremes drawn last
@@ -117,9 +117,9 @@ def plot_planes(it, S, reps):
             auc_a, auc_b = high_low(gt, a), high_low(gt, b)
             a, b = (a - a.mean()) / a.std(), (b - b.mean()) / b.std()
             sc = ax.scatter(a[order], b[order], s=10, c=pct[order], cmap=QUALITY, vmin=0, vmax=1, linewidths=0)
-            ax.set_title(f"{SETS[ds]}\n{ttl}\nAUC: obvious {auc_a:.2f}, expert {auc_b:.2f}", loc="left")
+            ax.set_title(f"{SETS[ds]}\n{ttl}\nAUC: novice {auc_a:.2f}, expert {auc_b:.2f}", loc="left")
             ax.axhline(0, color="#8a8984", lw=0.8); ax.axvline(0, color="#8a8984", lw=0.8)
-            ax.set_xlabel("obvious axis"); ax.set_ylabel("expert axis"); ax.set_xticks([]); ax.set_yticks([]); ax.set_box_aspect(1)
+            ax.set_xlabel("novice axis"); ax.set_ylabel("expert axis"); ax.set_xticks([]); ax.set_yticks([]); ax.set_box_aspect(1)
             lim = np.percentile(np.abs(np.r_[a, b]), 99) * 1.1; ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim)
     fig.colorbar(sc, ax=axs, shrink=0.5, label="human score (percentile within the set)")
     save(fig, "taste_space_images_planes")
@@ -129,4 +129,6 @@ if __name__ == "__main__":
     import sys, json
     from taste.common import RESULTS
     if "--plot" in sys.argv: plot_curves(pd.DataFrame(json.load(open(RESULTS))["taste_space_images"]))
+    elif "--planes" in sys.argv:
+        it = items("images"); plot_planes(it, ratings("images").reindex(it.index), representations(it, only=["qwen3.5-0.8b", "qwen3.5-27b"]))
     else: main()

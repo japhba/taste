@@ -234,9 +234,10 @@ def steering(it, S, P):
         c = C[C.judge == j].effect.values
         ax.scatter(x + RNG.uniform(-0.15, 0.15, len(c)), c, s=12, color="#c9c7c0", zorder=2, label="random direction, same size" if x == 0 else None)
         ax.scatter([x], [E.loc[j, "effect"]], s=70, color=tcolor[tier[j]], edgecolor="white", linewidth=1, zorder=3)
-    ax.scatter([], [], s=70, color=tcolor["tiny"], label="concrete-images feature, tiny judge"); ax.scatter([], [], s=70, color=tcolor["large"], label="… small or large judge")
+    for t, lab_t in [("tiny", "concrete-images feature: tiny judge"), ("small", "… small judge"), ("large", "… large judge")]:
+        ax.scatter([], [], s=70, color=tcolor[t], label=lab_t)
     ax.set_xticks(range(len(js)), [name[j] for j in js], rotation=40, ha="right"); ax.set_ylabel("rating change per unit of push")
-    fig.legend(loc="outside lower center", ncol=1, frameon=False)
+    fig.legend(loc="outside lower center", ncol=2, frameon=False)
     p = save(fig, "finding_steering")
     record("finding_steering", E.reset_index().to_dict("records"))
     B = pd.read_parquet(DATA / "steer/haiku_features_craft.parquet")

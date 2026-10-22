@@ -2,9 +2,9 @@
 of every haiku (mean over the haiku's tokens, at 2/3 depth), oriented so that +PC is what Qwen3.5-27B rates higher, named by Claude
 from exemplars and checked on held-out forced choices (taste.pcs). Every judge's weight on every feature (Spearman of the PC with its
 score) then sorts the features by who uses them:
-  obvious        judges of every size weight it the same way
-  non-obvious    large judges weight it, tiny ones do not
-  high/low-brow  tiny and large judges weight it with opposite signs (+ end: what large judges like and tiny ones dislike)
+  needs no expertise     judges of every size weight it the same way
+  needs expertise        large judges weight it, tiny ones do not
+  high-brow vs low-brow  tiny and large judges weight it with opposite signs (+ end: what large judges like and tiny ones dislike)
 Ground truth alongside: the writer contrasts (weak < open < frontier models) and human crowd (top r/haiku) < journal.
 For the steering run (taste.steer_features), each local judge's own direction for each named feature: the difference between the
 mean representation of the top and the bottom fifth of haiku by that feature, at the judge's 2/3-depth layer.
@@ -37,15 +37,15 @@ def classify(w):
     """w: weights by judge for one feature (oriented: + = what the reference judge likes)."""
     t = {k: w[v].mean() for k, v in TIERS.items()}
     if abs(t["large"]) < 0.12: return "weak"
-    if np.sign(t["tiny"]) != np.sign(t["large"]) and abs(t["tiny"]) >= 0.1: return "high/low-brow"
-    if abs(t["tiny"]) < 0.4 * abs(t["large"]): return "non-obvious"
-    return "obvious"
+    if np.sign(t["tiny"]) != np.sign(t["large"]) and abs(t["tiny"]) >= 0.1: return "high-brow vs low-brow"
+    if abs(t["tiny"]) < 0.4 * abs(t["large"]): return "needs expertise"
+    return "needs no expertise"
 
 
-def humans_on_craft(it, keep, demean):
+def humans_on_craft(it, keep, demean, ref=REF):
     """Human haiku (no topic) placed on the topic-removed PCs: the same PCA as taste.pcs.basis, fit on topic-centred model haiku, applied to
     human haiku centred on the model haiku's mean."""
-    ids, layers, H = hidden("haiku", REF, "mean")
+    ids, layers, H = hidden("haiku", ref, "mean")
     li = int(np.argmin(np.abs(layers - LAYER_FRAC * layers.max()))); X = H[:, li].astype(np.float32)
     m = keep.reindex(ids).to_numpy(bool); Xm = X[m]
     Xc = Xm - pd.DataFrame(Xm).groupby(demean.reindex(ids[m]).to_numpy()).transform("mean").to_numpy()
@@ -90,7 +90,7 @@ def main(craft):
     pd.set_option("display.width", 250)
     print(summary.round(3).to_string())
     # name the strongest features of each class (cached names are reused)
-    chosen = [k for c in ["obvious", "non-obvious", "high/low-brow"] for k in summary[summary["class"] == c].large.abs().sort_values(ascending=False).index[:3]]
+    chosen = [k for c in ["needs no expertise", "needs expertise", "high-brow vs low-brow"] for k in summary[summary["class"] == c].large.abs().sort_values(ascending=False).index[:3]]
     client = openrouter()
     labels = {k: label_pc(client, "haiku", it, B[k], f"{variant}/{REF}/{k}") for k in chosen}
     for k in chosen: print(k, cls[k], labels[k])
@@ -103,7 +103,7 @@ def main(craft):
 
 def plot(W, T, cls, labels, chosen, sfx):
     order = [r for t in TIERS.values() for r in t if r in W.index]
-    rows = sorted(chosen, key=lambda k: ["obvious", "non-obvious", "high/low-brow"].index(cls[k]))
+    rows = sorted(chosen, key=lambda k: ["needs no expertise", "needs expertise", "high-brow vs low-brow"].index(cls[k]))
     M = pd.concat([W.loc[order, rows].T, T[rows].T], axis=1)
     fig, ax = plt.subplots(figsize=(13, 0.62 * len(rows) + 2.6), layout="constrained")
     im = ax.imshow(M.values, cmap=DIVERGING, vmin=-0.6, vmax=0.6, aspect="auto")
