@@ -1,7 +1,7 @@
 """Human taste on x, each judge's discriminability on y: does telling better from worse improve with judge size at every level?
 Haiku: the human ladder (tweets < r/haiku ignored < r/haiku top 5% < journal); at each step, the AUC of the judge's rating for the better tier.
 Photos: AVA, in fifths by the human mean score (about 200 photographers per photo); at each step, the AUC between adjacent fifths.
-One curve per Qwen3.5 judge (lighter = smaller), DeepSeek-V4.1-Flash (763B), Claude Opus 5.5 (haiku only), and DeepSeek told to answer as a
+Each point sits on the better rung of its pair (the bottom rung has nothing below it). One curve per Qwen3.5 judge (lighter = smaller), DeepSeek-V4.1-Flash (763B), Claude Opus 5.5 (haiku only), and DeepSeek told to answer as a
 haiku-journal editor (taste.ds_rate --persona editor). Above each tier or fifth, a representative example: the haiku whose mean
 percentile over all judges is closest to its tier's mean, the photo closest to its fifth's median human score.
 
@@ -37,7 +37,7 @@ def curves(scores, groups, order):
 
 def draw(ax, R, judges, n_tiers):
     ax.axhspan(0.25, 0.5, color="#f0efec", lw=0, zorder=0); ax.axhline(0.5, color="#8a8984", lw=1)
-    x = np.arange(n_tiers - 1) + 0.5
+    x = np.arange(1, n_tiers)  # each point sits on the better rung: this rung vs the one below
     for j, col in zip(QWEN, RAMP):
         if j in judges: ax.plot(x, R[R.judge == j].set_index("step").auc.reindex(range(len(x))), color=col, lw=2.2, marker="o", ms=6, mec="white", mew=1, label=f"Qwen3.5-{SIZE[j]}")
     if DS in judges: ax.plot(x, R[R.judge == DS].set_index("step").auc.reindex(range(len(x))), color=DS_COLOR, lw=2.6, marker="D", ms=7, mec="white", mew=1, label="DeepSeek-V4.1 (763B)")
@@ -60,7 +60,7 @@ def haiku(ax):
         ax.annotate(hum.haiku[ex], (i, 1.02), xycoords=("data", "axes fraction"), ha="center", va="bottom",
                     bbox=dict(boxstyle="round,pad=0.5", fc="#f7f6f3", ec="#d6d4cf"), annotation_clip=False)
     ax.set_xticks(np.arange(len(TIERS)), list(TIERS.values()))
-    ax.set_xlabel("human taste: haiku from the bottom to the top of the ladder")
+    ax.set_xlabel("human taste: haiku from the bottom to the top of the ladder (each point: this rung vs the one below)")
     return R
 
 
@@ -76,7 +76,7 @@ def photos(ax):
         ax.add_artist(ab)
     lo = ava.human_score.groupby(fifth).agg(["min", "max"])
     ax.set_xticks(range(5), [f"{a:.1f}–{b:.1f}" for a, b in lo.values])
-    ax.set_xlabel("human taste: AVA photos in fifths by their mean score (1–10)")
+    ax.set_xlabel("human taste: AVA photos in fifths by their mean score, 1–10 (each point: this fifth vs the one below)")
     return R
 
 
