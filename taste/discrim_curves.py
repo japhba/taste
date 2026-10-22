@@ -107,18 +107,27 @@ def by_size(n_boot=300):
     return D
 
 
+CLAUDE_GUESS = 2000  # Claude's size is not public; ~2T is the figure people float online, drawn as a guess
+
+
 def plot_by_size(D):
-    CLAUDE_X = 1600
+    """One line through every judge sorted by size (Claude at a guessed ~2T); markers keep the family; the editor persona off the line."""
     fig, ax = plt.subplots(figsize=(5.2, 4.6), layout="constrained")
-    ax.axhline(0.5, color="#8a8984", lw=1); ax.axvline(1000, color="#d6d4cf", lw=1)
-    err = lambda d: [d.auc - d.lo, d.hi - d.auc]
-    for js, col, lab in [(QWEN, "#1c5cab", "Qwen3.5 judges"), (GEMMA, FAMILY_COLOR["gemma"], "Gemma 4 judges")]:
-        d = D.loc[js].sort_values("size")
-        ax.errorbar(d["size"], d.auc, yerr=err(d), color=col, lw=2, marker="o", ms=6, mec="white", mew=1, capsize=2, label=lab)
-    d = D.loc[[DS]]; ax.errorbar(d["size"], d.auc, yerr=err(d), color=DS_COLOR, marker="D", ms=8, ls="none", capsize=2, label="DeepSeek-V4.1 (763B)")
-    d = D.loc[["editor"]]; ax.errorbar([D.loc[DS, "size"]], d.auc, yerr=err(d), color=DS_COLOR, marker="D", ms=8, mfc="white", mew=1.6, ls="none", capsize=2, label="… told it is a journal editor")
-    d = D.loc[[ANCHOR]]; ax.errorbar([CLAUDE_X], d.auc, yerr=err(d), color=CLAUDE_COLOR, marker="*", ms=12, ls="none", capsize=2, label="Claude Opus 5.5")
-    ax.set_xscale("log"); ax.set_xticks([1, 10, 100, CLAUDE_X], ["1B", "10B", "100B", "Claude"]); ax.minorticks_off()
+    ax.axhline(0.5, color="#8a8984", lw=1)
+    D = D.copy(); D.loc[ANCHOR, "size"] = CLAUDE_GUESS
+    line = D.drop(index="editor").sort_values("size")
+    ax.plot(line["size"], line.auc, color="#3d3d3a", lw=2, zorder=2)
+    style = {**{j: ("o", "#1c5cab", "Qwen3.5") for j in QWEN}, **{j: ("o", FAMILY_COLOR["gemma"], "Gemma 4") for j in GEMMA},
+             DS: ("D", DS_COLOR, "DeepSeek-V4.1 (763B)"), ANCHOR: ("*", CLAUDE_COLOR, "Claude Opus 5.5 (size guessed, ~2T)")}
+    seen = set()
+    for j, r in line.iterrows():
+        m, c, lab = style[j]
+        ax.errorbar([r["size"]], [r.auc], yerr=[[r.auc - r.lo], [r.hi - r.auc]], color=c, marker=m, ms=12 if m == "*" else 7, mec="white", mew=1, capsize=2, ls="none", zorder=3,
+                    label=None if lab in seen else lab); seen.add(lab)
+    r = D.loc["editor"]
+    ax.errorbar([D.loc[DS, "size"]], [r.auc], yerr=[[r.auc - r.lo], [r.hi - r.auc]], color=DS_COLOR, marker="D", ms=7, mfc="white", mew=1.6, capsize=2, ls="none", zorder=3,
+                label="DeepSeek-V4.1, told it is a journal editor")
+    ax.set_xscale("log"); ax.set_xticks([1, 10, 100, 1000], ["1B", "10B", "100B", "1T"]); ax.minorticks_off()
     ax.set_xlabel("judge size (parameters)"); ax.set_ylabel("prefers the better haiku, mean over the ladder (AUC)")
     ax.legend(frameon=False, loc="lower right")
     save(fig, "discrim_by_size")
