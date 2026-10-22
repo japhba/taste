@@ -41,7 +41,8 @@ def curves(scores, groups, order):
 def draw(ax, R, judges, n_tiers):
     ax.axhspan(0.25, 0.5, color="#f0efec", lw=0, zorder=0); ax.axhline(0.5, color="#8a8984", lw=1)
     x = np.arange(n_tiers - 1) + 0.5  # each point between the two rungs it compares
-    shown = [j for j in QWEN if j in judges]; ramp = RAMP if len(shown) == len(QWEN) else [RAMP[round(i * (len(RAMP) - 1) / max(len(shown) - 1, 1))] for i in range(len(shown))]
+    shown = [j for j in QWEN if j in judges]
+    ramp = RAMP if len(shown) == len(QWEN) else [RAMP[2 + round(i * (len(RAMP) - 3) / max(len(shown) - 1, 1))] for i in range(len(shown))]  # few judges: skip the palest blues
     for j, col in zip(shown, ramp):
         if j in judges: ax.plot(x, R[R.judge == j].set_index("step").auc.reindex(range(len(x))), color=col, lw=2.2, marker="o", ms=6, mec="white", mew=1, label=f"Qwen3.5-{SIZE[j]}")
     if DS in judges: ax.plot(x, R[R.judge == DS].set_index("step").auc.reindex(range(len(x))), color=DS_COLOR, lw=2.6, marker="D", ms=7, mec="white", mew=1, label="DeepSeek-V4.1 (763B)")
@@ -85,7 +86,7 @@ def photos(ax):
 
 
 GEMMA = ["gemma-4-e2b", "gemma-4-e4b", "gemma-4-26b-a4b", "gemma-4-31b"]
-FEW = ["qwen3.5-0.8b", "qwen3.5-4b", "qwen3.5-27b", DS, ANCHOR]  # the slide version of the rung curves
+FEW = ["qwen3.5-0.8b", "qwen3.5-27b"]  # the slide version of the rung curves: a small and a large judge
 
 
 def by_size(n_boot=300):
@@ -137,7 +138,7 @@ def main():
     for name, R in [("haiku", Rh), ("photos", Rp)]: print(name); print(R.pivot(index="judge", columns="step", values="auc").round(2).to_string())
     save(fig, "discrim_curves")
     fig, ax = plt.subplots(figsize=(8.8, 7.4), layout="constrained")  # haiku alone, for a slide, three examples per tier
-    haiku(ax, n_examples=3, judges=FEW); fig.legend(*ax.get_legend_handles_labels(), loc="outside lower center", ncol=3, frameon=False)
+    haiku(ax, n_examples=3, judges=FEW); fig.legend(*ax.get_legend_handles_labels(), loc="outside lower center", ncol=2, frameon=False)
     save(fig, "discrim_haiku")
     D = by_size(); record("discrim_by_size", D.reset_index(names="judge").to_dict("records")); print(D.round(3).to_string()); plot_by_size(D)
 
