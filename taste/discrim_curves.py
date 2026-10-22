@@ -5,6 +5,9 @@ Each point sits between the two rungs it compares. One curve per Qwen3.5 judge (
 haiku-journal editor (taste.ds_rate --persona editor). Above each tier or fifth, a representative example: the haiku whose mean
 percentile over all judges is closest to its tier's mean, the photo closest to its fifth's median human score.
 
+Companion: each judge's AUC averaged over the three steps of the haiku ladder against its size (95% bootstrap interval, resampling
+haiku within each tier).
+
   python -m taste.discrim_curves
 """
 import re
@@ -80,6 +83,47 @@ def photos(ax):
     return R
 
 
+GEMMA = ["gemma-4-e2b", "gemma-4-e4b", "gemma-4-26b-a4b", "gemma-4-31b"]
+
+
+def by_size(n_boot=300):
+    """Mean AUC over the human ladder's steps per judge, with a bootstrap interval (haiku resampled within each tier)."""
+    from taste.models import BY_NAME
+    it = items("haiku"); S = ratings("haiku").reindex(it.index); hum = it[it.generator.isin(TIERS)]
+    ed = pd.read_parquet(RATINGS / "haiku_editor" / f"{DS}.parquet").set_index("item_id").score
+    sc = S.loc[hum.index, QWEN + GEMMA + [DS, ANCHOR]].assign(editor=ed.reindex(hum.index)); g = hum.generator.values; order = list(TIERS)
+    rng = np.random.default_rng(0)
+    def mean_auc(idx):
+        out = {}
+        for j in sc.columns:
+            v = sc[j].values[idx]; gg = g[idx]
+            out[j] = np.mean([auc(v[(gg == lo) & np.isfinite(v)], v[(gg == hi) & np.isfinite(v)]) for lo, hi in zip(order[:-1], order[1:])])
+        return pd.Series(out)
+    base = mean_auc(np.arange(len(g)))
+    groups = [np.flatnonzero(g == t) for t in order]
+    boots = pd.DataFrame([mean_auc(np.concatenate([rng.choice(ix, len(ix)) for ix in groups])) for _ in range(n_boot)])
+    D = pd.DataFrame({"auc": base, "lo": boots.quantile(0.025), "hi": boots.quantile(0.975)})
+    D["size"] = [BY_NAME[j].params_b if j in BY_NAME else np.nan for j in D.index]
+    return D
+
+
+def plot_by_size(D):
+    CLAUDE_X = 1600
+    fig, ax = plt.subplots(figsize=(5.2, 4.6), layout="constrained")
+    ax.axhline(0.5, color="#8a8984", lw=1); ax.axvline(1000, color="#d6d4cf", lw=1)
+    err = lambda d: [d.auc - d.lo, d.hi - d.auc]
+    for js, col, lab in [(QWEN, "#1c5cab", "Qwen3.5 judges"), (GEMMA, FAMILY_COLOR["gemma"], "Gemma 4 judges")]:
+        d = D.loc[js].sort_values("size")
+        ax.errorbar(d["size"], d.auc, yerr=err(d), color=col, lw=2, marker="o", ms=6, mec="white", mew=1, capsize=2, label=lab)
+    d = D.loc[[DS]]; ax.errorbar(d["size"], d.auc, yerr=err(d), color=DS_COLOR, marker="D", ms=8, ls="none", capsize=2, label="DeepSeek-V4.1 (763B)")
+    d = D.loc[["editor"]]; ax.errorbar([D.loc[DS, "size"]], d.auc, yerr=err(d), color=DS_COLOR, marker="D", ms=8, mfc="white", mew=1.6, ls="none", capsize=2, label="… told it is a journal editor")
+    d = D.loc[[ANCHOR]]; ax.errorbar([CLAUDE_X], d.auc, yerr=err(d), color=CLAUDE_COLOR, marker="*", ms=12, ls="none", capsize=2, label="Claude Opus 5.5")
+    ax.set_xscale("log"); ax.set_xticks([1, 10, 100, CLAUDE_X], ["1B", "10B", "100B", "Claude"]); ax.minorticks_off()
+    ax.set_xlabel("judge size (parameters)"); ax.set_ylabel("prefers the better haiku, mean over the ladder (AUC)")
+    ax.legend(frameon=False, loc="lower right")
+    save(fig, "discrim_by_size")
+
+
 def main():
     fig, axs = plt.subplots(1, 2, figsize=(16, 7.6), layout="constrained", gridspec_kw=dict(width_ratios=[1.15, 1]))
     Rh, Rp = haiku(axs[0]), photos(axs[1])
@@ -93,6 +137,7 @@ def main():
     fig, ax = plt.subplots(figsize=(10, 6.4), layout="constrained")  # haiku alone, for a slide
     haiku(ax); fig.legend(*ax.get_legend_handles_labels(), loc="outside lower center", ncol=3, frameon=False)
     save(fig, "discrim_haiku")
+    D = by_size(); record("discrim_by_size", D.reset_index(names="judge").to_dict("records")); print(D.round(3).to_string()); plot_by_size(D)
 
 
 if __name__ == "__main__":
