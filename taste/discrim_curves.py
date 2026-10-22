@@ -42,7 +42,7 @@ def draw(ax, R, judges, n_tiers):
     ax.axhspan(0.25, 0.5, color="#f0efec", lw=0, zorder=0); ax.axhline(0.5, color="#8a8984", lw=1)
     x = np.arange(n_tiers - 1) + 0.5  # each point between the two rungs it compares
     shown = [j for j in QWEN if j in judges]
-    ramp = RAMP if len(shown) == len(QWEN) else [RAMP[2 + round(i * (len(RAMP) - 3) / max(len(shown) - 1, 1))] for i in range(len(shown))]  # few judges: skip the palest blues
+    ramp = RAMP if len(shown) == len(QWEN) else {1: ["#1c5cab"], 2: ["#86b6ef", "#0d366b"], 3: ["#86b6ef", "#3987e5", "#0d366b"]}[len(shown)]  # few judges: well-separated blues
     for j, col in zip(shown, ramp):
         if j in judges: ax.plot(x, R[R.judge == j].set_index("step").auc.reindex(range(len(x))), color=col, lw=2.2, marker="o", ms=6, mec="white", mew=1, label=f"Qwen3.5-{SIZE[j]}")
     if DS in judges: ax.plot(x, R[R.judge == DS].set_index("step").auc.reindex(range(len(x))), color=DS_COLOR, lw=2.6, marker="D", ms=7, mec="white", mew=1, label="DeepSeek-V4.1 (763B)")
