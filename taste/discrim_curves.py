@@ -41,7 +41,8 @@ def curves(scores, groups, order):
 def draw(ax, R, judges, n_tiers):
     ax.axhspan(0.25, 0.5, color="#f0efec", lw=0, zorder=0); ax.axhline(0.5, color="#8a8984", lw=1)
     x = np.arange(n_tiers - 1) + 0.5  # each point between the two rungs it compares
-    for j, col in zip(QWEN, RAMP):
+    shown = [j for j in QWEN if j in judges]; ramp = RAMP if len(shown) == len(QWEN) else [RAMP[round(i * (len(RAMP) - 1) / max(len(shown) - 1, 1))] for i in range(len(shown))]
+    for j, col in zip(shown, ramp):
         if j in judges: ax.plot(x, R[R.judge == j].set_index("step").auc.reindex(range(len(x))), color=col, lw=2.2, marker="o", ms=6, mec="white", mew=1, label=f"Qwen3.5-{SIZE[j]}")
     if DS in judges: ax.plot(x, R[R.judge == DS].set_index("step").auc.reindex(range(len(x))), color=DS_COLOR, lw=2.6, marker="D", ms=7, mec="white", mew=1, label="DeepSeek-V4.1 (763B)")
     if ANCHOR in judges: ax.plot(x, R[R.judge == ANCHOR].set_index("step").auc.reindex(range(len(x))), color=CLAUDE_COLOR, lw=2, marker="*", ms=11, mec="white", mew=0.8, label="Claude Opus 5.5")
@@ -49,12 +50,12 @@ def draw(ax, R, judges, n_tiers):
     ax.set_xlim(-0.5, n_tiers - 0.5); ax.set_ylim(0.25, 1.0); ax.set_ylabel("judge prefers the better one (AUC)")
 
 
-def haiku(ax, n_examples=1):
+def haiku(ax, n_examples=1, judges=None):
     it = items("haiku"); S = ratings("haiku").reindex(it.index)
     hum = it[it.generator.isin(TIERS)]
     ed = pd.read_parquet(RATINGS / "haiku_editor" / f"{DS}.parquet").set_index("item_id").score
     sc = S.loc[hum.index, QWEN + [DS, ANCHOR]].assign(editor=ed.reindex(hum.index))
-    R = curves(sc, hum.generator, list(TIERS)); draw(ax, R, list(sc.columns), len(TIERS))
+    R = curves(sc, hum.generator, list(TIERS)); draw(ax, R, judges or list(sc.columns), len(TIERS))
     P = S.loc[hum.index].rank(pct=True).mean(axis=1)  # mean percentile over all judges, within the human haiku
     for i, (g, name) in enumerate(TIERS.items()):
         short = hum.haiku.map(lambda h: max(len(l) for l in h.split("\n")) <= 24)
@@ -84,6 +85,7 @@ def photos(ax):
 
 
 GEMMA = ["gemma-4-e2b", "gemma-4-e4b", "gemma-4-26b-a4b", "gemma-4-31b"]
+FEW = ["qwen3.5-0.8b", "qwen3.5-4b", "qwen3.5-27b", DS, ANCHOR]  # the slide version of the rung curves
 
 
 def by_size(n_boot=300):
@@ -116,9 +118,9 @@ def plot_by_size(D):
     ax.axhline(0.5, color="#8a8984", lw=1)
     D = D.copy(); D.loc[ANCHOR, "size"] = CLAUDE_GUESS
     line = D.drop(index="editor").sort_values("size")
-    ax.errorbar(line["size"], line.auc, yerr=[line.auc - line.lo, line.hi - line.auc], color="#1c5cab", lw=2, marker="o", ms=6, mec="white", mew=1, capsize=2)
+    ax.errorbar(line["size"], line.auc, yerr=[line.auc - line.lo, line.hi - line.auc], color="black", lw=2, marker="o", ms=6, mec="white", mew=1, capsize=2)
     r = D.loc["editor"]
-    ax.errorbar([D.loc[DS, "size"]], [r.auc], yerr=[[r.auc - r.lo], [r.hi - r.auc]], color="#1c5cab", marker="o", ms=6, mfc="white", mew=1.6, capsize=2, ls="none")
+    ax.errorbar([D.loc[DS, "size"]], [r.auc], yerr=[[r.auc - r.lo], [r.hi - r.auc]], color="black", marker="o", ms=6, mfc="white", mew=1.6, capsize=2, ls="none")
     ax.set_xscale("log"); ax.set_xticks([1, 10, 100, 1000], ["1B", "10B", "100B", "1T"]); ax.minorticks_off(); ax.set_xlim(0.5, 4000)
     ax.set_xlabel("judge size (parameters)"); ax.set_ylabel("prefers the better haiku, mean over the ladder (AUC)")
     save(fig, "discrim_by_size")
@@ -135,7 +137,7 @@ def main():
     for name, R in [("haiku", Rh), ("photos", Rp)]: print(name); print(R.pivot(index="judge", columns="step", values="auc").round(2).to_string())
     save(fig, "discrim_curves")
     fig, ax = plt.subplots(figsize=(8.8, 7.4), layout="constrained")  # haiku alone, for a slide, three examples per tier
-    haiku(ax, n_examples=3); fig.legend(*ax.get_legend_handles_labels(), loc="outside lower center", ncol=4, frameon=False)
+    haiku(ax, n_examples=3, judges=FEW); fig.legend(*ax.get_legend_handles_labels(), loc="outside lower center", ncol=3, frameon=False)
     save(fig, "discrim_haiku")
     D = by_size(); record("discrim_by_size", D.reset_index(names="judge").to_dict("records")); print(D.round(3).to_string()); plot_by_size(D)
 
