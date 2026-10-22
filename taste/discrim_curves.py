@@ -111,7 +111,7 @@ CLAUDE_GUESS = 2000  # Claude's size is not public; ~2T is the figure people flo
 
 
 def plot_by_size(D):
-    """One line through every judge sorted by size (Claude at a guessed ~2T); the editor persona off the line; labels instead of a legend."""
+    """One line through every judge sorted by size (Claude at a guessed ~2T); the editor persona as a hollow point off the line; no labels."""
     fig, ax = plt.subplots(figsize=(4.2, 5.4), layout="constrained")
     ax.axhline(0.5, color="#8a8984", lw=1)
     D = D.copy(); D.loc[ANCHOR, "size"] = CLAUDE_GUESS
@@ -119,11 +119,7 @@ def plot_by_size(D):
     ax.errorbar(line["size"], line.auc, yerr=[line.auc - line.lo, line.hi - line.auc], color="#1c5cab", lw=2, marker="o", ms=6, mec="white", mew=1, capsize=2)
     r = D.loc["editor"]
     ax.errorbar([D.loc[DS, "size"]], [r.auc], yerr=[[r.auc - r.lo], [r.hi - r.auc]], color="#1c5cab", marker="o", ms=6, mfc="white", mew=1.6, capsize=2, ls="none")
-    for j, text, off, ha, va in [(DS, "DeepSeek-V4.1", (0, -24), "center", "top"), (ANCHOR, "Claude\n(~2T, guessed)", (9, 0), "left", "center"),
-                                 ("editor", "DeepSeek as\njournal editor", (-9, 0), "right", "center")]:
-        x = D.loc[DS, "size"] if j == "editor" else D.loc[j, "size"]
-        ax.annotate(text, (x, D.loc[j, "auc"]), xytext=off, textcoords="offset points", ha=ha, va=va, color="#52514e")
-    ax.set_xscale("log"); ax.set_xticks([1, 10, 100, 1000], ["1B", "10B", "100B", "1T"]); ax.minorticks_off(); ax.set_xlim(0.5, 40000)
+    ax.set_xscale("log"); ax.set_xticks([1, 10, 100, 1000], ["1B", "10B", "100B", "1T"]); ax.minorticks_off(); ax.set_xlim(0.5, 4000)
     ax.set_xlabel("judge size (parameters)"); ax.set_ylabel("prefers the better haiku, mean over the ladder (AUC)")
     save(fig, "discrim_by_size")
 
